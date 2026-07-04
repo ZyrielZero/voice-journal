@@ -103,6 +103,30 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
             TopAppBar(
                 title = { Text("Voice Journal", style = MaterialTheme.typography.headlineMedium) },
                 actions = {
+                    if (dev.zyriel.voicejournal.BuildConfig.DEBUG) {
+                        var benchStatus by remember { mutableStateOf<String?>(null) }
+                        val ctx = LocalContext.current
+                        TextButton(onClick = {
+                            if (benchStatus == null) {
+                                benchStatus = "starting"
+                                Thread {
+                                    val f = dev.zyriel.voicejournal.bench.BenchmarkSuite(ctx)
+                                        .runAll { s -> benchStatus = s }
+                                    benchStatus = "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                }.start()
+                            }
+                        }) { Text("Bench") }
+                        benchStatus?.let {
+                            AlertDialog(
+                                onDismissRequest = { if (it.startsWith("Saved")) benchStatus = null },
+                                title = { Text("Benchmark") },
+                                text = { Text(it) },
+                                confirmButton = {
+                                    if (it.startsWith("Saved")) TextButton(onClick = { benchStatus = null }) { Text("Close") }
+                                },
+                            )
+                        }
+                    }
                     TextButton(onClick = onCycleTheme) {
                         Text(when (themeMode) {
                             ThemeMode.SYSTEM -> "Auto"

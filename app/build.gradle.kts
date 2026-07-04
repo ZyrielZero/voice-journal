@@ -1,3 +1,5 @@
+import java.io.ByteArrayOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -17,6 +19,13 @@ android {
         versionCode = 2
         versionName = "0.2.0-core"
         ndk { abiFilters += "arm64-v8a" }
+
+        val sha = runCatching {
+            val out = ByteArrayOutputStream()
+            project.exec { commandLine("git", "rev-parse", "--short", "HEAD"); standardOutput = out }
+            out.toString().trim()
+        }.getOrDefault("nogit")
+        buildConfigField("String", "GIT_SHA", "\"$sha\"")
         externalNativeBuild {
             cmake { arguments += "-DANDROID_STL=c++_static" }
         }
@@ -42,7 +51,10 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     androidResources { noCompress += "bin" }
 }
