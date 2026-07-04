@@ -6,3 +6,5 @@ local.properties
 .idea/
 *.iml
 .DS_Store
+-e 
+app/src/main/assets/models/

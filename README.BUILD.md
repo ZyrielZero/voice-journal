@@ -19,6 +19,9 @@ whisper.cpp and both model files. Unzip and open in Android Studio.
 2. Let Gradle sync. First sync downloads dependencies; takes a few minutes.
 3. Build > Build APK, or run directly on a connected device.
 
+Before first build, fetch the model files (not tracked in git):
+    powershell scripts\\fetch-models.ps1
+
 Command line alternative (from project root, Windows):
     gradlew.bat assembleDebug
 Output lands in app/build/outputs/apk/debug/.
