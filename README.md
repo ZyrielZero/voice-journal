@@ -2,7 +2,7 @@
 
 A fully offline voice journal for Android. Record your thoughts, get them transcribed on-device, and search them by meaning, not just keywords. Nothing ever leaves your phone.
 
-![Voice Journal](docs/screenshot.png)
+<img src="docs/screenshot.png" alt="Voice Journal home screen" width="300">
 
 ## Why offline matters
 
