@@ -1,7 +1,8 @@
 # Voice Journal — Build Setup
 
-Complete source. Everything needed to build is in this zip, including
-whisper.cpp and both model files. Unzip and open in Android Studio.
+Complete source, including vendored whisper.cpp. The model files are not
+tracked in git; fetch them once with scripts/fetch-models.ps1 before the
+first build. Clone and open in Android Studio.
 
 ## Requirements
 
