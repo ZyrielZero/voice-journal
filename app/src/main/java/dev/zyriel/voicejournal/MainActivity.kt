@@ -52,8 +52,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.zyriel.voicejournal.data.JournalEntry
+import dev.zyriel.voicejournal.pipeline.RecordingController.PipelineState
 import dev.zyriel.voicejournal.ui.JournalViewModel
-import dev.zyriel.voicejournal.ui.JournalViewModel.PipelineState
 import dev.zyriel.voicejournal.ui.theme.EmberPulseLow
 import dev.zyriel.voicejournal.ui.theme.EmberPulseHigh
 import dev.zyriel.voicejournal.ui.theme.ThemeMode
@@ -92,9 +92,18 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
     val elapsed by vm.recorder.elapsedMs.collectAsState()
 
     val context = LocalContext.current
+    // POST_NOTIFICATIONS is requested alongside the mic so the recording
+    // notification lands in the drawer, but it is never a gate: recording
+    // proceeds on the mic grant alone. A denied notification just means the
+    // ongoing recording shows in the system Task Manager instead.
     val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted -> if (granted) vm.toggleRecording() }
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results -> if (results[Manifest.permission.RECORD_AUDIO] == true) vm.toggleRecording() }
+    val recordPermissions = remember {
+        if (android.os.Build.VERSION.SDK_INT >= 33)
+            arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        else arrayOf(Manifest.permission.RECORD_AUDIO)
+    }
 
     var selected by remember { mutableStateOf<JournalEntry?>(null) }
 
@@ -157,7 +166,7 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                             context, Manifest.permission.RECORD_AUDIO
                         ) == PackageManager.PERMISSION_GRANTED
                         if (granted) vm.toggleRecording()
-                        else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        else permissionLauncher.launch(recordPermissions)
                     }
                 }
             }) {

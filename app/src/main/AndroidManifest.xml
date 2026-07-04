@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- The only permission this app will ever request. Deliberately no INTERNET. -->
+    <!-- Deliberately no INTERNET permission: nothing in this app can touch
+         the network, enforced by the OS. Everything below is local-only
+         plumbing for recording with the screen off. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="@string/app_name"
@@ -17,5 +23,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Keeps recording and transcription alive with the screen off.
+             microphone is a while-in-use type: this service must only ever be
+             started while the app is visible (the Rec tap), never from the
+             background. -->
+        <service
+            android:name=".pipeline.RecordingService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
     </application>
 </manifest>
