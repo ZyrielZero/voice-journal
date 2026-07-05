@@ -29,6 +29,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
@@ -89,6 +91,7 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
     val pipeline by vm.pipeline.collectAsState()
     val query by vm.query.collectAsState()
     val playing by vm.player.playingFile.collectAsState()
+    val transferStatus by vm.transferStatus.collectAsState()
     val elapsed by vm.recorder.elapsedMs.collectAsState()
 
     val context = LocalContext.current
@@ -142,6 +145,34 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                             ThemeMode.LIGHT -> "Light"
                             ThemeMode.DARK -> "Dark"
                         })
+                    }
+                    Box {
+                        var menuOpen by remember { mutableStateOf(false) }
+                        val exportLauncher = rememberLauncherForActivityResult(
+                            ActivityResultContracts.CreateDocument("application/zip")
+                        ) { uri -> uri?.let(vm::exportTo) }
+                        val importLauncher = rememberLauncherForActivityResult(
+                            ActivityResultContracts.OpenDocument()
+                        ) { uri -> uri?.let(vm::importFrom) }
+
+                        TextButton(onClick = { menuOpen = true }) { Text("More") }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Export journal") },
+                                onClick = {
+                                    menuOpen = false
+                                    val stamp = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+                                    exportLauncher.launch("voice-journal-$stamp.zip")
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Import journal") },
+                                onClick = {
+                                    menuOpen = false
+                                    importLauncher.launch(arrayOf("application/zip"))
+                                },
+                            )
+                        }
                     }
                 }
             )
@@ -223,6 +254,18 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                 }
             }
         }
+    }
+
+    transferStatus?.let { status ->
+        val inFlight = status.endsWith("...")
+        AlertDialog(
+            onDismissRequest = { if (!inFlight) vm.dismissTransferStatus() },
+            title = { Text("Journal transfer") },
+            text = { Text(status) },
+            confirmButton = {
+                if (!inFlight) TextButton(onClick = vm::dismissTransferStatus) { Text("Close") }
+            },
+        )
     }
 
     selected?.let { entry ->

@@ -103,5 +103,8 @@ dependencies {
     ksp("androidx.room:room-compiler:2.8.4")
 
     testImplementation("junit:junit:4.13.2")
+    // org.json is an Android framework class at runtime; JVM unit tests
+    // (JournalArchiveTest) need the standalone artifact.
+    testImplementation("org.json:json:20240303")
     testImplementation("com.microsoft.onnxruntime:onnxruntime:1.22.0")
 }

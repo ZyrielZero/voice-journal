@@ -153,6 +153,16 @@ class RecordingController private constructor(private val app: Context) {
         }
     }
 
+    /**
+     * Embeds anything sitting in the DB without a current-model vector.
+     * Public entry point for the import path, which inserts entries with
+     * null embeddings and hands vectorization to the same code that
+     * covers first-launch backfill.
+     */
+    fun requestBackfill() {
+        scope.launch { backfillEmbeddings() }
+    }
+
     fun dismissError() {
         if (_pipeline.value is PipelineState.Failed) _pipeline.value = PipelineState.Idle
     }
