@@ -1,5 +1,6 @@
 package dev.zyriel.voicejournal.audio
 
+import java.io.DataInputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -7,31 +8,63 @@ import java.nio.ByteOrder
 /**
  * Reads a WAV produced by [WavWriter] into normalized 32-bit float PCM,
  * which is the input format whisper.cpp expects. Pure Kotlin, JVM-testable.
+ *
+ * Streams from disk: the only large allocation is the FloatArray itself
+ * (4 bytes per sample), never a second full copy of the file. A one-hour
+ * recording still needs ~230 MB of floats, which is why callers pass
+ * [readFloatPcm]'s maxSamples — the reader enforces the ceiling before
+ * allocating anything proportional to file size.
  */
 object WavReader {
 
-    /** Returns samples in [-1.0, 1.0]. Throws on anything that isn't our canonical format. */
-    fun readFloatPcm(file: File): FloatArray {
-        val bytes = file.readBytes()
-        require(bytes.size >= WavWriter.HEADER_SIZE) { "File too small to be a WAV" }
-        val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    private const val CHUNK_BYTES = 64 * 1024
 
-        require(ascii(bytes, 0, 4) == "RIFF" && ascii(bytes, 8, 4) == "WAVE") { "Not a RIFF/WAVE file" }
-        require(buf.getShort(20).toInt() == 1) { "Not PCM" }
-        require(buf.getShort(22).toInt() == 1) { "Not mono" }
-        require(buf.getInt(24) == WavWriter.SAMPLE_RATE) { "Not 16 kHz" }
-        require(buf.getShort(34).toInt() == 16) { "Not 16-bit" }
+    /**
+     * Returns samples in [-1.0, 1.0]. Throws on anything that isn't our
+     * canonical format, and on audio longer than [maxSamples] samples —
+     * the check runs before the sample buffer is allocated, so an
+     * over-length file fails fast instead of exhausting the heap.
+     */
+    fun readFloatPcm(file: File, maxSamples: Int = Int.MAX_VALUE): FloatArray {
+        require(file.length() >= WavWriter.HEADER_SIZE) { "File too small to be a WAV" }
 
-        val dataSize = buf.getInt(40)
-        require(WavWriter.HEADER_SIZE + dataSize <= bytes.size) { "data chunk exceeds file size" }
+        DataInputStream(file.inputStream().buffered(CHUNK_BYTES)).use { input ->
+            val header = ByteArray(WavWriter.HEADER_SIZE)
+            input.readFully(header)
+            val h = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
 
-        val out = FloatArray(dataSize / 2)
-        var pos = WavWriter.HEADER_SIZE
-        for (i in out.indices) {
-            out[i] = buf.getShort(pos) / 32768f
-            pos += 2
+            require(ascii(header, 0, 4) == "RIFF" && ascii(header, 8, 4) == "WAVE") { "Not a RIFF/WAVE file" }
+            require(h.getShort(20).toInt() == 1) { "Not PCM" }
+            require(h.getShort(22).toInt() == 1) { "Not mono" }
+            require(h.getInt(24) == WavWriter.SAMPLE_RATE) { "Not 16 kHz" }
+            require(h.getShort(34).toInt() == 16) { "Not 16-bit" }
+
+            val dataSize = h.getInt(40)
+            require(dataSize >= 0 && WavWriter.HEADER_SIZE + dataSize.toLong() <= file.length()) {
+                "data chunk exceeds file size"
+            }
+
+            val samples = dataSize / 2
+            require(samples <= maxSamples) {
+                "audio is $samples samples (${samples / WavWriter.SAMPLE_RATE}s), " +
+                    "over the $maxSamples-sample transcription limit"
+            }
+
+            val out = FloatArray(samples)
+            val chunk = ByteArray(CHUNK_BYTES)
+            var i = 0
+            var remaining = samples * 2
+            while (remaining > 0) {
+                val want = minOf(chunk.size, remaining)
+                input.readFully(chunk, 0, want)
+                val cb = ByteBuffer.wrap(chunk, 0, want).order(ByteOrder.LITTLE_ENDIAN)
+                repeat(want / 2) {
+                    out[i++] = cb.short / 32768f
+                }
+                remaining -= want
+            }
+            return out
         }
-        return out
     }
 
     private fun ascii(b: ByteArray, at: Int, len: Int) = String(b, at, len, Charsets.US_ASCII)

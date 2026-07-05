@@ -18,6 +18,26 @@ class Transcriber(private val context: Context) {
     companion object {
         private const val ASSET = "models/ggml-base.en-q5_1.bin"
         private const val VAD_ASSET = "models/ggml-silero-v5.1.2.bin"
+
+        /**
+         * Longest entry the pipeline will record and transcribe. Bounds the
+         * transcription heap: whisper needs the whole clip as one FloatArray
+         * (4 bytes/sample at 16 kHz = ~3.7 MB/min), so unbounded recordings
+         * OOM the pipeline — and worse, the orphan sweep then retries the
+         * same OOM on every launch. 30 min = ~115 MB of floats, safely
+         * inside any modern heap while being far longer than a journal
+         * entry has business being.
+         */
+        const val MAX_CLIP_SECONDS = 30 * 60
+
+        /**
+         * Reader-side guard, slightly above the auto-stop cap: the recorder
+         * stops on an elapsed-time check between buffer reads, so the file
+         * can legitimately run a few chunks past MAX_CLIP_SECONDS. Only
+         * files that never went through the cap (pre-cap orphans, imported
+         * audio fed to the bench) trip this.
+         */
+        internal const val MAX_READ_SAMPLES = (MAX_CLIP_SECONDS + 60) * 16_000
     }
 
     /**
@@ -75,7 +95,7 @@ class Transcriber(private val context: Context) {
      */
     suspend fun transcribe(wav: File, useVad: Boolean): String {
         val ctx = ensureContext()
-        val samples = withContext(Dispatchers.IO) { WavReader.readFloatPcm(wav) }
+        val samples = withContext(Dispatchers.IO) { WavReader.readFloatPcm(wav, MAX_READ_SAMPLES) }
         if (samples.isEmpty()) return ""
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
         val vadPath = if (useVad) vadModelPath() else null

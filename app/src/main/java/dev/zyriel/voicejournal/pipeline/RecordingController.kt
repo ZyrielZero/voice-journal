@@ -65,6 +65,19 @@ class RecordingController private constructor(private val app: Context) {
     @Volatile private var activeFile: File? = null
 
     init {
+        // Auto-stop at the transcription cap so no recording can outgrow
+        // what the pipeline can hold in memory (Transcriber.MAX_CLIP_SECONDS).
+        // Lives here, not in AudioRecorder: the recorder is a dumb capture
+        // loop and the cap is pipeline policy.
+        scope.launch {
+            recorder.elapsedMs.collect { ms ->
+                if (_pipeline.value is PipelineState.Recording &&
+                    ms >= Transcriber.MAX_CLIP_SECONDS * 1000L
+                ) {
+                    stopAndTranscribe()
+                }
+            }
+        }
         scope.launch {
             engine = runCatching {
                 OnnxEmbeddingEngine(
