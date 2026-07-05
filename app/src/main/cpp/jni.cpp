@@ -23,7 +23,8 @@ Java_dev_zyriel_voicejournal_whisper_WhisperBridge_initContext(
 
 JNIEXPORT jstring JNICALL
 Java_dev_zyriel_voicejournal_whisper_WhisperBridge_fullTranscribe(
-        JNIEnv *env, jobject, jlong ctxPtr, jfloatArray samples, jint nThreads) {
+        JNIEnv *env, jobject, jlong ctxPtr, jfloatArray samples, jint nThreads,
+        jstring vadModelPath) {
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
     if (ctx == nullptr) return env->NewStringUTF("");
 
@@ -39,7 +40,23 @@ Java_dev_zyriel_voicejournal_whisper_WhisperBridge_fullTranscribe(
     params.print_realtime = false;
     params.no_timestamps = true;
 
-    if (whisper_full(ctx, params, pcm.data(), (int) pcm.size()) != 0) {
+    // whisper.cpp's built-in VAD (a bundled Silero graph loaded from a ggml
+    // file). When enabled, whisper_full runs detection first and decodes
+    // only the speech segments, so silence stops costing encoder time.
+    // vad_model_path must outlive whisper_full; hold the chars until after.
+    const char *vadPath = nullptr;
+    if (vadModelPath != nullptr) {
+        vadPath = env->GetStringUTFChars(vadModelPath, nullptr);
+        if (vadPath != nullptr && vadPath[0] != '\0') {
+            params.vad = true;
+            params.vad_model_path = vadPath;
+            params.vad_params = whisper_vad_default_params();
+        }
+    }
+
+    int rc = whisper_full(ctx, params, pcm.data(), (int) pcm.size());
+    if (vadPath != nullptr) env->ReleaseStringUTFChars(vadModelPath, vadPath);
+    if (rc != 0) {
         return env->NewStringUTF("");
     }
 

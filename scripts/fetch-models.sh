@@ -22,4 +22,7 @@ fetch bge_small_en_v15_q8.onnx \
 fetch bge_vocab.txt \
     "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/vocab.txt"
 
+fetch ggml-silero-v5.1.2.bin \
+    "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"
+
 echo "Models fetched. Build away."
