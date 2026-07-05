@@ -79,6 +79,20 @@ class RecordingController private constructor(private val app: Context) {
                 }
             }
         }
+        // A capture failure (mic read error, device revoked the stream)
+        // breaks the recorder's loop but used to be observed by nothing:
+        // the pipeline sat in Recording with a frozen timer while no audio
+        // flowed. Salvage what was captured — the WAV is finalized by the
+        // loop's use{} — and run it through the normal stop path, which
+        // also winds down the service and notification.
+        scope.launch {
+            recorder.state.collect { s ->
+                if (s is AudioRecorder.State.Error && _pipeline.value is PipelineState.Recording) {
+                    Log.w(TAG, "capture failed mid-recording, salvaging partial audio: ${s.message}")
+                    stopAndTranscribe()
+                }
+            }
+        }
         scope.launch {
             engine = runCatching {
                 OnnxEmbeddingEngine(
