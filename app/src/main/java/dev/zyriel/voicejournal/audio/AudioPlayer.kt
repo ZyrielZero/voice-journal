@@ -11,7 +11,8 @@ import java.io.File
  * Plays back a recorded WAV file. One playback at a time; starting a new one
  * stops the previous. MediaPlayer handles WAV natively on all supported APIs.
  *
- * UNVERIFIED ON HARDWARE.
+ * Not covered by the v0.4.x hardware robustness checklist; playback has no
+ * documented device verification yet.
  */
 class AudioPlayer {
 

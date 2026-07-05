@@ -36,9 +36,9 @@ import kotlinx.coroutines.launch
  * reacquire the microphone from the background anyway. The orphan sweep is
  * the recovery path, not a zombie service.
  *
- * UNVERIFIED ON HARDWARE. Compiles and follows the documented contracts;
- * screen-off recording, notification behavior, and the stop action must be
- * validated on a device.
+ * Hardware-verified (Pixel 10 Pro XL): screen-off recording, the Stop
+ * notification action, and the notifications-denied fallback all passed the
+ * robustness checklist.
  */
 class RecordingService : Service() {
 

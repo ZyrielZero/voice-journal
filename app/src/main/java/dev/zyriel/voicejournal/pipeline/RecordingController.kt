@@ -33,11 +33,11 @@ import java.util.Locale
  * microphone-legal while the screen is off. If the process dies anyway,
  * [sweepOrphans] recovers on next launch (NFR-06).
  *
- * UNVERIFIED ON HARDWARE for the service-interaction paths. The JVM-testable
- * pieces (WavRepair, OrphanSweep, WavWriter/Reader) carry the unit tests;
- * this class is the thin Android glue between them and must be validated on
- * a device: record with screen off, kill from recents mid-recording and
- * mid-transcription, relaunch, verify recovery.
+ * Service-interaction paths hardware-verified (Pixel 10 Pro XL): screen-off
+ * recording, kill mid-recording, kill mid-transcription, relaunch recovery
+ * all passed. The JVM-testable pieces (WavRepair, OrphanSweep, WavWriter/
+ * Reader) carry the unit tests. Newer glue is NOT yet device-verified: the
+ * 30-min auto-stop collector and the capture-error salvage path.
  */
 class RecordingController private constructor(private val app: Context) {
 
