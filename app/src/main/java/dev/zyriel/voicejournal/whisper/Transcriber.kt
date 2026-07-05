@@ -1,6 +1,7 @@
 package dev.zyriel.voicejournal.whisper
 
 import android.content.Context
+import dev.zyriel.voicejournal.audio.AtomicMaterialize
 import dev.zyriel.voicejournal.audio.WavReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -58,27 +59,22 @@ class Transcriber(private val context: Context) {
      * re-run fetch-models), in which case VAD is silently unavailable and
      * transcription behaves exactly as before.
      */
-    private suspend fun vadModelPath(): String? {
-        val f = File(context.filesDir, "ggml-silero-v5.1.2.bin")
-        if (f.exists() && f.length() > 0L) return f.absolutePath
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                context.assets.open(VAD_ASSET).use { input ->
-                    f.outputStream().use { input.copyTo(it) }
-                }
-                f.absolutePath
-            }.getOrElse { f.delete(); null }
-        }
+    private suspend fun vadModelPath(): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            AtomicMaterialize.ensure(File(context.filesDir, "ggml-silero-v5.1.2.bin")) {
+                context.assets.open(VAD_ASSET)
+            }.absolutePath
+        }.getOrNull() // asset absent in older checkouts: VAD silently unavailable
     }
 
     private suspend fun ensureContext(): Long = mutex.withLock {
         if (ctxPtr != 0L) return ctxPtr
-        val modelFile = File(context.filesDir, "ggml-base.en-q5_1.bin")
-        if (!modelFile.exists() || modelFile.length() == 0L) {
-            withContext(Dispatchers.IO) {
-                context.assets.open(ASSET).use { input ->
-                    modelFile.outputStream().use { input.copyTo(it) }
-                }
+        // Atomic copy: a process death mid-write must never leave a
+        // truncated model that passes existence checks and bricks
+        // transcription on every subsequent launch.
+        val modelFile = withContext(Dispatchers.IO) {
+            AtomicMaterialize.ensure(File(context.filesDir, "ggml-base.en-q5_1.bin")) {
+                context.assets.open(ASSET)
             }
         }
         ctxPtr = withContext(Dispatchers.Default) { WhisperBridge.initContext(modelFile.absolutePath) }
