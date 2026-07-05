@@ -1,4 +1,5 @@
 import java.io.ByteArrayOutputStream
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -38,10 +39,37 @@ android {
         }
     }
 
+    // Signing config comes from an untracked keystore.properties in the
+    // project root (storeFile, storePassword, keyAlias, keyPassword). The
+    // key never enters the repo or CI: when the file is absent the release
+    // build assembles unsigned, which is exactly what CI needs to prove R8
+    // and the native build without ever seeing a secret.
+    val keystoreProps = Properties().apply {
+        val f = rootProject.file("keystore.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val hasSigning = keystoreProps.containsKey("storeFile")
+    if (hasSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug { }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            if (hasSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
 
