@@ -2,6 +2,7 @@ package dev.zyriel.voicejournal.pipeline
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.content.ContextCompat
 import dev.zyriel.voicejournal.audio.AudioRecorder
 import dev.zyriel.voicejournal.audio.OrphanSweep
@@ -90,16 +91,23 @@ class RecordingController private constructor(private val app: Context) {
         }
     }
 
-    /** Recovers WAVs stranded by an earlier process death. Runs once per process. */
+    /**
+     * Recovers WAVs stranded by an earlier process death. Runs once per
+     * process. Per-file failures are captured in the report and logged, not
+     * thrown and not swallowed: a bad orphan stays on disk for the next
+     * sweep and cannot shadow the recoverable ones behind it. The active
+     * path is a supplier so a recording started mid-sweep is skipped, not
+     * "repaired" while it's being written.
+     */
     private suspend fun sweepOrphans() {
         val referenced = dao.allOnce().map { it.audioPath }.toSet()
-        runCatching {
-            OrphanSweep.sweep(dir, referenced, activeFile?.absolutePath) { file ->
-                // Recovered audio gets a real transcript; timestamp comes from the
-                // file itself so the entry lands where the user actually spoke it.
-                kotlinx.coroutines.runBlocking { insertTranscribed(file, file.lastModified()) }
-            }
+        val report = OrphanSweep.sweep(dir, referenced, { activeFile?.absolutePath }) { file ->
+            // Recovered audio gets a real transcript; timestamp comes from the
+            // file itself so the entry lands where the user actually spoke it.
+            kotlinx.coroutines.runBlocking { insertTranscribed(file, file.lastModified()) }
         }
+        if (report.failed.isNotEmpty()) Log.w(TAG, report.oneLine())
+        else Log.i(TAG, report.oneLine())
     }
 
     /** Embeds entries that have no vector or a vector from a different model. */
@@ -181,6 +189,8 @@ class RecordingController private constructor(private val app: Context) {
     }
 
     companion object {
+        private const val TAG = "RecordingController"
+
         @Volatile private var instance: RecordingController? = null
 
         fun get(context: Context): RecordingController =

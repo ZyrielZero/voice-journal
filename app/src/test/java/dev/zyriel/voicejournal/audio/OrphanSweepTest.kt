@@ -45,7 +45,7 @@ class OrphanSweepTest {
         val report = OrphanSweep.sweep(
             dir = dir,
             referencedPaths = setOf(referenced.absolutePath),
-            activePath = active.absolutePath,
+            activePath = { active.absolutePath },
             onRecoverable = { handed += it },
         )
 
@@ -76,7 +76,7 @@ class OrphanSweepTest {
         val refBytes = referenced.readBytes()
         val actBytes = active.readBytes()
 
-        OrphanSweep.sweep(dir, setOf(referenced.absolutePath), active.absolutePath) {
+        OrphanSweep.sweep(dir, setOf(referenced.absolutePath), { active.absolutePath }) {
             throw AssertionError("nothing should be recoverable here")
         }
 
@@ -104,12 +104,49 @@ class OrphanSweepTest {
     }
 
     @Test
-    fun callbackFailurePropagatesInsteadOfBeingSwallowed() {
+    fun callbackFailureIsRecordedAndDoesNotAbortTheSweep() {
+        // The old contract propagated the first exception, which aborted the
+        // loop: one bad orphan shadowed every orphan sorted after it, and the
+        // caller's blanket runCatching then made the whole thing invisible.
+        // Now a failure is per-file: recorded, file left on disk, sweep goes on.
         val dir = tempDir()
-        validWav(dir, "entry_x.wav")
+        val bad = validWav(dir, "entry_a_bad.wav")
+        val good = validWav(dir, "entry_b_good.wav")
 
-        assertThrows(IllegalStateException::class.java) {
-            OrphanSweep.sweep(dir, emptySet()) { error("transcriber exploded") }
+        val handled = mutableListOf<File>()
+        val report = OrphanSweep.sweep(dir, emptySet()) { f ->
+            if (f == bad) error("transcriber exploded")
+            handled += f
         }
+
+        assertEquals(listOf(good), handled)
+        assertEquals(listOf(good), report.recovered)
+        assertEquals(1, report.failed.size)
+        assertEquals(bad, report.failed[0].first)
+        assertTrue(report.failed[0].second.message!!.contains("exploded"))
+        assertTrue("failed file must stay on disk for the next sweep", bad.exists())
+        assertTrue(report.oneLine().contains("1 FAILED"))
+    }
+
+    @Test
+    fun activePathIsReadPerFileNotSnapshotted() {
+        // A recording that becomes active mid-sweep must be skipped even
+        // though it wasn't active when the sweep started.
+        val dir = tempDir()
+        val first = validWav(dir, "entry_1.wav")
+        val second = crashedWav(dir, "entry_2.wav")
+
+        var activeNow: String? = null
+        val report = OrphanSweep.sweep(dir, emptySet(), { activeNow }) { f ->
+            // Recovering the first file "takes time"; the user starts
+            // recording into the second during it.
+            if (f == first) activeNow = second.absolutePath
+        }
+
+        assertEquals(listOf(first), report.recovered)
+        assertEquals(listOf(second), report.skipped)
+        // Crashed header untouched: sweep never repaired the now-active file.
+        assertEquals(0, java.nio.ByteBuffer.wrap(second.readBytes(), 40, 4)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN).int)
     }
 }
