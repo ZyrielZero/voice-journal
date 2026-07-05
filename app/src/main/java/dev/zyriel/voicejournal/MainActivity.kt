@@ -55,6 +55,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.pipeline.RecordingController.PipelineState
+import dev.zyriel.voicejournal.ui.AboutDialog
 import dev.zyriel.voicejournal.ui.JournalViewModel
 import dev.zyriel.voicejournal.ui.theme.EmberPulseLow
 import dev.zyriel.voicejournal.ui.theme.EmberPulseHigh
@@ -109,6 +110,7 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
     }
 
     var selected by remember { mutableStateOf<JournalEntry?>(null) }
+    var showAbout by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -171,6 +173,10 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                                     menuOpen = false
                                     importLauncher.launch(arrayOf("application/zip"))
                                 },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("About") },
+                                onClick = { menuOpen = false; showAbout = true },
                             )
                         }
                     }
@@ -255,6 +261,8 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
             }
         }
     }
+
+    if (showAbout) AboutDialog(onDismiss = { showAbout = false })
 
     transferStatus?.let { status ->
         val inFlight = status.endsWith("...")

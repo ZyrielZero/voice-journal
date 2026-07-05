@@ -85,7 +85,18 @@ android {
     }
 
     androidResources { noCompress += "bin" }
+
+    // The About screen renders the license texts from assets. They are
+    // copied from the repo-root originals at build time so there is one
+    // source of truth; nothing is hand-duplicated into assets.
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/licenseAssets"))
 }
+
+val copyLicenseAssets = tasks.register<Copy>("copyLicenseAssets") {
+    from(rootProject.file("THIRD_PARTY_NOTICES.md"), rootProject.file("LICENSE"))
+    into(layout.buildDirectory.dir("generated/licenseAssets/licenses"))
+}
+tasks.named("preBuild") { dependsOn(copyLicenseAssets) }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
