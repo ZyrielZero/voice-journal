@@ -1,4 +1,5 @@
 import java.io.ByteArrayOutputStream
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -38,10 +39,37 @@ android {
         }
     }
 
+    // Signing config comes from an untracked keystore.properties in the
+    // project root (storeFile, storePassword, keyAlias, keyPassword). The
+    // key never enters the repo or CI: when the file is absent the release
+    // build assembles unsigned, which is exactly what CI needs to prove R8
+    // and the native build without ever seeing a secret.
+    val keystoreProps = Properties().apply {
+        val f = rootProject.file("keystore.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val hasSigning = keystoreProps.containsKey("storeFile")
+    if (hasSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug { }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            if (hasSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -57,7 +85,18 @@ android {
     }
 
     androidResources { noCompress += "bin" }
+
+    // The About screen renders the license texts from assets. They are
+    // copied from the repo-root originals at build time so there is one
+    // source of truth; nothing is hand-duplicated into assets.
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/licenseAssets"))
 }
+
+val copyLicenseAssets = tasks.register<Copy>("copyLicenseAssets") {
+    from(rootProject.file("THIRD_PARTY_NOTICES.md"), rootProject.file("LICENSE"))
+    into(layout.buildDirectory.dir("generated/licenseAssets/licenses"))
+}
+tasks.named("preBuild") { dependsOn(copyLicenseAssets) }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
@@ -75,5 +114,8 @@ dependencies {
     ksp("androidx.room:room-compiler:2.8.4")
 
     testImplementation("junit:junit:4.13.2")
+    // org.json is an Android framework class at runtime; JVM unit tests
+    // (JournalArchiveTest) need the standalone artifact.
+    testImplementation("org.json:json:20240303")
     testImplementation("com.microsoft.onnxruntime:onnxruntime:1.22.0")
 }

@@ -11,6 +11,6 @@ object WhisperBridge {
     init { System.loadLibrary("whisperjni") }
 
     external fun initContext(modelPath: String): Long
-    external fun fullTranscribe(ctxPtr: Long, samples: FloatArray, nThreads: Int): String
+    external fun fullTranscribe(ctxPtr: Long, samples: FloatArray, nThreads: Int, vadModelPath: String?): String
     external fun freeContext(ctxPtr: Long)
 }

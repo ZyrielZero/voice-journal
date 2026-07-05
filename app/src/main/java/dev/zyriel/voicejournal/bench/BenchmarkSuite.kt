@@ -98,6 +98,21 @@ class BenchmarkSuite(private val context: Context) {
             val rtf = r.medianMs / (secs * 1000.0)
             results += r.copy(extra = mapOf("clip_s" to "$secs", "realtime_factor" to "%.3f".format(rtf)))
         }
+        // ---- VAD comparison ----
+        // Same 30s clip, half of it silence, decoded with VAD off then on.
+        // CAVEAT: Silero may classify synthetic tones as non-speech and trim
+        // more than a real voice would, which inflates the apparent win.
+        // These numbers gate nothing; the enable/disable decision waits for
+        // the committed real-speech clips (roadmap item 5).
+        onProgress("Transcription: VAD comparison")
+        val gappyClip = syntheticWav(30, silentEverySecond = true)
+        for (vad in booleanArrayOf(false, true)) {
+            val label = if (vad) "whisper.clip30s_gaps.vad_on" else "whisper.clip30s_gaps.vad_off"
+            results += Bench.measure(label, warmups = 1, runs = 3,
+                extra = mapOf("clip_s" to "30", "silence_ratio" to "0.5", "synthetic" to "true")) {
+                runBlocking { transcriber.transcribe(gappyClip, useVad = vad) }
+            }
+        }
         transcriber.release()
 
         // ---- Write ----
@@ -108,22 +123,30 @@ class BenchmarkSuite(private val context: Context) {
         out
     }
 
-    /** 16 kHz mono tone WAV of [seconds], written to cache. */
-    private fun syntheticWav(seconds: Int): File {
-        val f = File(context.cacheDir, "bench_${seconds}s.wav")
+    /**
+     * 16 kHz mono tone WAV of [seconds], written to cache. With
+     * [silentEverySecond], odd-numbered seconds are zeroed so the clip is
+     * 50% silence — the shape the VAD comparison needs.
+     */
+    private fun syntheticWav(seconds: Int, silentEverySecond: Boolean = false): File {
+        val suffix = if (silentEverySecond) "_gaps" else ""
+        val f = File(context.cacheDir, "bench_${seconds}s$suffix.wav")
         if (f.exists() && f.length() > 0) return f
         WavWriter(f).use { w ->
             val total = WavWriter.SAMPLE_RATE * seconds
             val chunk = ShortArray(WavWriter.SAMPLE_RATE)
             var written = 0
+            var second = 0
             while (written < total) {
+                val silent = silentEverySecond && second % 2 == 1
                 for (i in chunk.indices) {
                     val t = (written + i).toDouble() / WavWriter.SAMPLE_RATE
-                    chunk[i] = (sin(2 * PI * 220 * t) * 8000).toInt().toShort()
+                    chunk[i] = if (silent) 0 else (sin(2 * PI * 220 * t) * 8000).toInt().toShort()
                 }
                 val n = minOf(chunk.size, total - written)
                 w.appendSamples(chunk, n)
                 written += n
+                second++
             }
         }
         return f
