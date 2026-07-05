@@ -124,12 +124,24 @@ class RecordingController private constructor(private val app: Context) {
         else Log.i(TAG, report.oneLine())
     }
 
-    /** Embeds entries that have no vector or a vector from a different model. */
+    /**
+     * Embeds entries that have no vector or a vector from a different model.
+     * A failed embed (engine returns null per its contract) skips that entry
+     * and the next launch retries; a DB failure is logged per entry rather
+     * than killing the loop — this runs unattended at every process start
+     * and after imports, so it must never take the app down with it.
+     */
     private suspend fun backfillEmbeddings() {
         val e = engine ?: return
         for (entry in dao.needingEmbedding(OnnxEmbeddingEngine.MODEL_TAG)) {
-            val v = e.embed(entry.transcript) ?: continue
-            dao.update(entry.copy(embedding = v, embeddingModel = OnnxEmbeddingEngine.MODEL_TAG))
+            try {
+                val v = e.embed(entry.transcript) ?: continue
+                dao.update(entry.copy(embedding = v, embeddingModel = OnnxEmbeddingEngine.MODEL_TAG))
+            } catch (ex: kotlinx.coroutines.CancellationException) {
+                throw ex
+            } catch (ex: Exception) {
+                Log.w(TAG, "backfill failed for entry ${entry.id}: ${ex.message}")
+            }
         }
     }
 

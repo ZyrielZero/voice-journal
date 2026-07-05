@@ -3,6 +3,7 @@ package dev.zyriel.voicejournal.search
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -44,7 +45,20 @@ class OnnxEmbeddingEngine(
     /** Embeds a search query with the BGE retrieval prefix. */
     suspend fun embedQuery(text: String): FloatArray? = run(QUERY_PREFIX + text)
 
-    private suspend fun run(text: String): FloatArray? = mutex.withLock {
+    private suspend fun run(text: String): FloatArray? = try {
+        runInner(text)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // The EmbeddingEngine contract is null-on-failure; every caller
+        // (insert, backfill, query) already degrades gracefully on null.
+        // Throwing instead turned a transient ORT hiccup into an uncaught
+        // coroutine exception — a process death at launch when it happened
+        // inside the backfill.
+        null
+    }
+
+    private suspend fun runInner(text: String): FloatArray = mutex.withLock {
         withContext(Dispatchers.Default) {
             val ids = tokenizer.encode(text, MAX_TOKENS)
             val n = ids.size
