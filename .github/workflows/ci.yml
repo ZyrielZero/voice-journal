@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # EmbeddingEngineTest runs real ONNX inference on the JVM against the
+      # bundled model, so the models must exist before the test task. Cached
+      # on the fetch script hash; ~90 MB otherwise re-downloaded per run.
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/models
+          key: models-${{ hashFiles('scripts/fetch-models.sh') }}
+
+      - name: Fetch models
+        run: bash scripts/fetch-models.sh
+
+      # The runner image ships an Android SDK; pin the exact NDK and CMake
+      # the project builds against (16 KB page alignment depends on r28).
+      - name: Install pinned NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;28.2.13676358" "cmake;3.22.1" > /dev/null
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      # Assembles unsigned (no keystore.properties in CI) with R8 enabled.
+      # This proves keep rules and the native -O3 build compile and shrink
+      # cleanly on every push; runtime behavior still needs a device.
+      - name: Assemble release (unsigned, R8)
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/tests/
