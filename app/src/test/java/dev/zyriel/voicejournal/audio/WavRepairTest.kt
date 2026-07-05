@@ -114,4 +114,22 @@ class WavRepairTest {
         assertEquals(WavRepair.Outcome.Repaired(256L), WavRepair.inspectAndRepair(f))
         assertEquals(WavRepair.Outcome.AlreadyConsistent, WavRepair.inspectAndRepair(f))
     }
+
+    @Test
+    fun fileBeyondWavSizeLimitIsUnrecoverableNotTruncated() {
+        // WavWriter refuses to finalize a header past Int.MAX_VALUE - 36, so
+        // a larger file cannot be ours; patching would overflow the Int size
+        // fields. Sparse setLength keeps the test instant.
+        val f = java.io.File.createTempFile("huge", ".wav").apply { deleteOnExit() }
+        WavWriter(f).use { it.appendSamples(ShortArray(100)) }
+        java.io.RandomAccessFile(f, "rw").use { it.setLength(Int.MAX_VALUE.toLong() + 100) }
+        val before = f.length()
+
+        val outcome = WavRepair.inspectAndRepair(f)
+
+        org.junit.Assert.assertTrue(outcome is WavRepair.Outcome.Unrecoverable)
+        org.junit.Assert.assertTrue(
+            (outcome as WavRepair.Outcome.Unrecoverable).reason.contains("size limit"))
+        org.junit.Assert.assertEquals("file must be untouched", before, f.length())
+    }
 }

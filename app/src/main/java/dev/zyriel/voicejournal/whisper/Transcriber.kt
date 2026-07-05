@@ -102,7 +102,13 @@ class Transcriber(private val context: Context) {
         }
     }
 
-    fun release() {
+    /**
+     * Frees the native context. Suspends for the same mutex transcription
+     * holds: freeing mid-transcribe is a native use-after-free, and a
+     * lifecycle method on a class whose whole design is "one context,
+     * serialized" doesn't get to skip the serialization.
+     */
+    suspend fun release() = mutex.withLock {
         if (ctxPtr != 0L) { WhisperBridge.freeContext(ctxPtr); ctxPtr = 0 }
     }
 }

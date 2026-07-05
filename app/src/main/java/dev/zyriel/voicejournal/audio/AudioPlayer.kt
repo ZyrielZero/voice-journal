@@ -1,6 +1,7 @@
 package dev.zyriel.voicejournal.audio
 
 import android.media.MediaPlayer
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,14 +22,23 @@ class AudioPlayer {
 
     fun play(file: File) {
         stop()
-        player = MediaPlayer().apply {
-            setDataSource(file.absolutePath)
-            setOnCompletionListener { this@AudioPlayer.stop() }
-            setOnErrorListener { _, _, _ -> this@AudioPlayer.stop(); true }
-            prepare()
-            start()
+        // Callers check existence, not validity. Import is a source of WAVs
+        // this app didn't write, and a corrupt one used to crash here via
+        // an unhandled IOException from setDataSource/prepare. A file that
+        // won't play is a no-op with a log line, not a crash.
+        try {
+            player = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnCompletionListener { this@AudioPlayer.stop() }
+                setOnErrorListener { _, _, _ -> this@AudioPlayer.stop(); true }
+                prepare()
+                start()
+            }
+            _playingFile.value = file
+        } catch (e: Exception) {
+            Log.w("AudioPlayer", "cannot play ${file.name}: ${e.message}")
+            stop()
         }
-        _playingFile.value = file
     }
 
     fun stop() {
