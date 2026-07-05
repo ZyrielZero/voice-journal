@@ -4,9 +4,10 @@ import dev.zyriel.voicejournal.data.JournalEntry
 import kotlin.math.sqrt
 
 /**
- * Embedding abstraction. The LiteRT/EmbeddingGemma implementation lands when
- * the (license-gated) model and tokenizer are integrated; until then the app
- * ships without an engine and search uses [KeywordSearch].
+ * Embedding abstraction, implemented by [OnnxEmbeddingEngine] (bge-small-en
+ * int8 via ONNX Runtime). When the engine fails to initialize or an embed
+ * call fails, callers receive null and search falls back to [KeywordSearch];
+ * the null return is the contract, not a hypothetical.
  */
 interface EmbeddingEngine {
     /** Returns an L2-normalized vector, or null if the engine is unavailable. */

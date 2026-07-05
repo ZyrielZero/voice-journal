@@ -33,6 +33,16 @@ object JournalArchive {
     private const val MANIFEST = "manifest.json"
     private const val AUDIO_DIR = "audio/"
 
+    /**
+     * Import ceilings. The archive is the app's only external input
+     * surface, so it's the one place a storage-exhaustion limit belongs: a
+     * zip's declared sizes are attacker-controlled and streams must be
+     * bounded while copying, not trusted. Defaults are far beyond any real
+     * journal (a WAV hour is ~115 MB) while still bounding a hostile file.
+     */
+    const val DEFAULT_MAX_AUDIO_MEMBER_BYTES = 512L * 1024 * 1024
+    const val DEFAULT_MAX_TOTAL_AUDIO_BYTES = 8L * 1024 * 1024 * 1024
+
     /** One entry as read back from an archive. [audioPath] null when the archive had no audio for it. */
     data class ImportedEntry(
         val transcript: String,
@@ -100,10 +110,13 @@ object JournalArchive {
      */
     fun import(
         inp: InputStream,
+        maxAudioMemberBytes: Long = DEFAULT_MAX_AUDIO_MEMBER_BYTES,
+        maxTotalAudioBytes: Long = DEFAULT_MAX_TOTAL_AUDIO_BYTES,
         audioSink: (suggestedName: String, data: InputStream) -> String?,
     ): List<ImportedEntry> {
         var manifest: JSONObject? = null
         val writtenAudio = HashMap<String, String>() // zip member name -> absolute path
+        var totalAudio = 0L
 
         ZipInputStream(inp.buffered()).use { zip ->
             var e: ZipEntry? = zip.nextEntry
@@ -116,7 +129,11 @@ object JournalArchive {
                         // Strip any path component from the member name so a
                         // crafted archive cannot write outside the sink's dir.
                         val safe = File(e.name).name
-                        audioSink(safe, zip)?.let { writtenAudio[e.name] = it }
+                        val bounded = BoundedInputStream(zip, e.name, maxAudioMemberBytes) {
+                            totalAudio + it <= maxTotalAudioBytes
+                        }
+                        audioSink(safe, bounded)?.let { writtenAudio[e.name] = it }
+                        totalAudio += bounded.consumed
                     }
                 }
                 zip.closeEntry()
@@ -139,5 +156,39 @@ object JournalArchive {
                 audioPath = o.optString("audio", "").takeIf { it.isNotEmpty() }?.let { writtenAudio[it] },
             )
         }
+    }
+
+    /**
+     * Counts bytes as they're read and fails the archive — not silently
+     * truncates — when a member or the running total exceeds its ceiling.
+     * Zip metadata can lie about sizes, so the count happens on the actual
+     * bytes. close() is a no-op: the underlying ZipInputStream's member
+     * lifecycle belongs to the import loop.
+     */
+    private class BoundedInputStream(
+        private val inner: InputStream,
+        private val memberName: String,
+        private val memberLimit: Long,
+        private val totalAllows: (Long) -> Boolean,
+    ) : InputStream() {
+        var consumed = 0L
+            private set
+
+        private fun bump(n: Long) {
+            consumed += n
+            if (consumed > memberLimit || !totalAllows(consumed)) {
+                throw ArchiveFormatException(
+                    "archive member $memberName exceeds the import size limit"
+                )
+            }
+        }
+
+        override fun read(): Int =
+            inner.read().also { if (it >= 0) bump(1) }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int =
+            inner.read(b, off, len).also { if (it > 0) bump(it.toLong()) }
+
+        override fun close() { /* member lifecycle owned by the zip loop */ }
     }
 }

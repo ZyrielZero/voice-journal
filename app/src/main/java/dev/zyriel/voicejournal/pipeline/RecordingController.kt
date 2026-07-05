@@ -2,6 +2,7 @@ package dev.zyriel.voicejournal.pipeline
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.content.ContextCompat
 import dev.zyriel.voicejournal.audio.AudioRecorder
 import dev.zyriel.voicejournal.audio.OrphanSweep
@@ -32,11 +33,11 @@ import java.util.Locale
  * microphone-legal while the screen is off. If the process dies anyway,
  * [sweepOrphans] recovers on next launch (NFR-06).
  *
- * UNVERIFIED ON HARDWARE for the service-interaction paths. The JVM-testable
- * pieces (WavRepair, OrphanSweep, WavWriter/Reader) carry the unit tests;
- * this class is the thin Android glue between them and must be validated on
- * a device: record with screen off, kill from recents mid-recording and
- * mid-transcription, relaunch, verify recovery.
+ * Service-interaction paths hardware-verified (Pixel 10 Pro XL): screen-off
+ * recording, kill mid-recording, kill mid-transcription, relaunch recovery
+ * all passed. The JVM-testable pieces (WavRepair, OrphanSweep, WavWriter/
+ * Reader) carry the unit tests. Newer glue is NOT yet device-verified: the
+ * 30-min auto-stop collector and the capture-error salvage path.
  */
 class RecordingController private constructor(private val app: Context) {
 
@@ -65,6 +66,33 @@ class RecordingController private constructor(private val app: Context) {
     @Volatile private var activeFile: File? = null
 
     init {
+        // Auto-stop at the transcription cap so no recording can outgrow
+        // what the pipeline can hold in memory (Transcriber.MAX_CLIP_SECONDS).
+        // Lives here, not in AudioRecorder: the recorder is a dumb capture
+        // loop and the cap is pipeline policy.
+        scope.launch {
+            recorder.elapsedMs.collect { ms ->
+                if (_pipeline.value is PipelineState.Recording &&
+                    ms >= Transcriber.MAX_CLIP_SECONDS * 1000L
+                ) {
+                    stopAndTranscribe()
+                }
+            }
+        }
+        // A capture failure (mic read error, device revoked the stream)
+        // breaks the recorder's loop but used to be observed by nothing:
+        // the pipeline sat in Recording with a frozen timer while no audio
+        // flowed. Salvage what was captured — the WAV is finalized by the
+        // loop's use{} — and run it through the normal stop path, which
+        // also winds down the service and notification.
+        scope.launch {
+            recorder.state.collect { s ->
+                if (s is AudioRecorder.State.Error && _pipeline.value is PipelineState.Recording) {
+                    Log.w(TAG, "capture failed mid-recording, salvaging partial audio: ${s.message}")
+                    stopAndTranscribe()
+                }
+            }
+        }
         scope.launch {
             engine = runCatching {
                 OnnxEmbeddingEngine(
@@ -77,24 +105,43 @@ class RecordingController private constructor(private val app: Context) {
         }
     }
 
-    /** Recovers WAVs stranded by an earlier process death. Runs once per process. */
+    /**
+     * Recovers WAVs stranded by an earlier process death. Runs once per
+     * process. Per-file failures are captured in the report and logged, not
+     * thrown and not swallowed: a bad orphan stays on disk for the next
+     * sweep and cannot shadow the recoverable ones behind it. The active
+     * path is a supplier so a recording started mid-sweep is skipped, not
+     * "repaired" while it's being written.
+     */
     private suspend fun sweepOrphans() {
         val referenced = dao.allOnce().map { it.audioPath }.toSet()
-        runCatching {
-            OrphanSweep.sweep(dir, referenced, activeFile?.absolutePath) { file ->
-                // Recovered audio gets a real transcript; timestamp comes from the
-                // file itself so the entry lands where the user actually spoke it.
-                kotlinx.coroutines.runBlocking { insertTranscribed(file, file.lastModified()) }
-            }
+        val report = OrphanSweep.sweep(dir, referenced, { activeFile?.absolutePath }) { file ->
+            // Recovered audio gets a real transcript; timestamp comes from the
+            // file itself so the entry lands where the user actually spoke it.
+            kotlinx.coroutines.runBlocking { insertTranscribed(file, file.lastModified()) }
         }
+        if (report.failed.isNotEmpty()) Log.w(TAG, report.oneLine())
+        else Log.i(TAG, report.oneLine())
     }
 
-    /** Embeds entries that have no vector or a vector from a different model. */
+    /**
+     * Embeds entries that have no vector or a vector from a different model.
+     * A failed embed (engine returns null per its contract) skips that entry
+     * and the next launch retries; a DB failure is logged per entry rather
+     * than killing the loop — this runs unattended at every process start
+     * and after imports, so it must never take the app down with it.
+     */
     private suspend fun backfillEmbeddings() {
         val e = engine ?: return
         for (entry in dao.needingEmbedding(OnnxEmbeddingEngine.MODEL_TAG)) {
-            val v = e.embed(entry.transcript) ?: continue
-            dao.update(entry.copy(embedding = v, embeddingModel = OnnxEmbeddingEngine.MODEL_TAG))
+            try {
+                val v = e.embed(entry.transcript) ?: continue
+                dao.update(entry.copy(embedding = v, embeddingModel = OnnxEmbeddingEngine.MODEL_TAG))
+            } catch (ex: kotlinx.coroutines.CancellationException) {
+                throw ex
+            } catch (ex: Exception) {
+                Log.w(TAG, "backfill failed for entry ${entry.id}: ${ex.message}")
+            }
         }
     }
 
@@ -168,6 +215,8 @@ class RecordingController private constructor(private val app: Context) {
     }
 
     companion object {
+        private const val TAG = "RecordingController"
+
         @Volatile private var instance: RecordingController? = null
 
         fun get(context: Context): RecordingController =

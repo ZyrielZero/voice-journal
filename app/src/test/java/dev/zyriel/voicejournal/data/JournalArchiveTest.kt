@@ -44,7 +44,7 @@ class JournalArchiveTest {
         }.toByteArray()
 
         val importDir = tmp.newFolder("imported")
-        val imported = JournalArchive.import(ByteArrayInputStream(zipBytes), sinkInto(importDir))
+        val imported = JournalArchive.import(ByteArrayInputStream(zipBytes), audioSink = sinkInto(importDir))
 
         assertEquals(2, imported.size)
         assertEquals("walked the long way home", imported[0].transcript)
@@ -62,7 +62,7 @@ class JournalArchiveTest {
             JournalArchive.export(entries, { File(it.audioPath) }, out, appVersion = "t")
         }.toByteArray()
 
-        val imported = JournalArchive.import(ByteArrayInputStream(zipBytes), sinkInto(tmp.newFolder()))
+        val imported = JournalArchive.import(ByteArrayInputStream(zipBytes), audioSink = sinkInto(tmp.newFolder()))
         assertEquals(1, imported.size)
         assertEquals("audio lost to a cleanup", imported[0].transcript)
         assertNull(imported[0].audioPath)
@@ -106,7 +106,7 @@ class JournalArchiveTest {
         }.toByteArray()
 
         try {
-            JournalArchive.import(ByteArrayInputStream(zipBytes), sinkInto(tmp.newFolder()))
+            JournalArchive.import(ByteArrayInputStream(zipBytes), audioSink = sinkInto(tmp.newFolder()))
             fail("expected ArchiveFormatException")
         } catch (e: JournalArchive.ArchiveFormatException) {
             assertTrue(e.message!!.contains("manifest"))
@@ -124,7 +124,7 @@ class JournalArchiveTest {
         }.toByteArray()
 
         try {
-            JournalArchive.import(ByteArrayInputStream(zipBytes), sinkInto(tmp.newFolder()))
+            JournalArchive.import(ByteArrayInputStream(zipBytes), audioSink = sinkInto(tmp.newFolder()))
             fail("expected ArchiveFormatException")
         } catch (e: JournalArchive.ArchiveFormatException) {
             assertTrue(e.message!!.contains("999"))
@@ -135,7 +135,7 @@ class JournalArchiveTest {
     fun garbageInputIsRejectedNotCrashed() {
         val garbage = ByteArray(64) { (it * 7).toByte() }
         try {
-            JournalArchive.import(ByteArrayInputStream(garbage), sinkInto(tmp.newFolder()))
+            JournalArchive.import(ByteArrayInputStream(garbage), audioSink = sinkInto(tmp.newFolder()))
             fail("expected ArchiveFormatException")
         } catch (e: JournalArchive.ArchiveFormatException) {
             // ZipInputStream yields no entries from garbage, so this lands
@@ -171,6 +171,71 @@ class JournalArchiveTest {
     }
 
     @Test
+    fun audioMemberOverPerMemberCapFailsTheArchive() {
+        val big = wav("entry_big.wav", ByteArray(10_000))
+        val entries = listOf(entry(1, "too big", 1, big.absolutePath))
+        val zipBytes = ByteArrayOutputStream().also { out ->
+            JournalArchive.export(entries, { File(it.audioPath) }, out, appVersion = "t")
+        }.toByteArray()
+
+        try {
+            JournalArchive.import(
+                ByteArrayInputStream(zipBytes),
+                maxAudioMemberBytes = 5_000,
+                audioSink = sinkInto(tmp.newFolder()),
+            )
+            fail("expected ArchiveFormatException")
+        } catch (e: JournalArchive.ArchiveFormatException) {
+            assertTrue(e.message!!.contains("size limit"))
+        }
+    }
+
+    @Test
+    fun totalAudioOverCapFailsEvenWhenEachMemberFits() {
+        val a = wav("entry_a.wav", ByteArray(4_000))
+        val b = wav("entry_b.wav", ByteArray(4_000))
+        val entries = listOf(
+            entry(1, "a", 1, a.absolutePath),
+            entry(2, "b", 2, b.absolutePath),
+        )
+        val zipBytes = ByteArrayOutputStream().also { out ->
+            JournalArchive.export(entries, { File(it.audioPath) }, out, appVersion = "t")
+        }.toByteArray()
+
+        try {
+            JournalArchive.import(
+                ByteArrayInputStream(zipBytes),
+                maxAudioMemberBytes = 5_000,
+                maxTotalAudioBytes = 6_000,
+                audioSink = sinkInto(tmp.newFolder()),
+            )
+            fail("expected ArchiveFormatException")
+        } catch (e: JournalArchive.ArchiveFormatException) {
+            assertTrue(e.message!!.contains("size limit"))
+        }
+    }
+
+    @Test
+    fun archiveComfortablyUnderCapsImportsUnchanged() {
+        val a = wav("entry_ok.wav", byteArrayOf(1, 2, 3))
+        val zipBytes = ByteArrayOutputStream().also { out ->
+            JournalArchive.export(
+                listOf(entry(1, "fine", 1, a.absolutePath)),
+                { File(it.audioPath) }, out, appVersion = "t",
+            )
+        }.toByteArray()
+
+        val imported = JournalArchive.import(
+            ByteArrayInputStream(zipBytes),
+            maxAudioMemberBytes = 1_000,
+            maxTotalAudioBytes = 1_000,
+            audioSink = sinkInto(tmp.newFolder()),
+        )
+        assertEquals(1, imported.size)
+        assertArrayEquals(byteArrayOf(1, 2, 3), File(imported[0].audioPath!!).readBytes())
+    }
+
+    @Test
     fun manifestPlacedAfterAudioStillImports() {
         // Zips repacked by other tools can reorder members; import must not
         // depend on manifest-first ordering.
@@ -187,7 +252,7 @@ class JournalArchiveTest {
             }
         }.toByteArray()
 
-        val imported = JournalArchive.import(ByteArrayInputStream(zipBytes), sinkInto(tmp.newFolder()))
+        val imported = JournalArchive.import(ByteArrayInputStream(zipBytes), audioSink = sinkInto(tmp.newFolder()))
         assertEquals(1, imported.size)
         assertEquals("late manifest", imported[0].transcript)
         assertArrayEquals(byteArrayOf(5, 5), File(imported[0].audioPath!!).readBytes())

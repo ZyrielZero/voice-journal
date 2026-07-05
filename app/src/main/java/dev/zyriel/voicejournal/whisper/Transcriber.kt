@@ -1,6 +1,7 @@
 package dev.zyriel.voicejournal.whisper
 
 import android.content.Context
+import dev.zyriel.voicejournal.audio.AtomicMaterialize
 import dev.zyriel.voicejournal.audio.WavReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -18,6 +19,26 @@ class Transcriber(private val context: Context) {
     companion object {
         private const val ASSET = "models/ggml-base.en-q5_1.bin"
         private const val VAD_ASSET = "models/ggml-silero-v5.1.2.bin"
+
+        /**
+         * Longest entry the pipeline will record and transcribe. Bounds the
+         * transcription heap: whisper needs the whole clip as one FloatArray
+         * (4 bytes/sample at 16 kHz = ~3.7 MB/min), so unbounded recordings
+         * OOM the pipeline — and worse, the orphan sweep then retries the
+         * same OOM on every launch. 30 min = ~115 MB of floats, safely
+         * inside any modern heap while being far longer than a journal
+         * entry has business being.
+         */
+        const val MAX_CLIP_SECONDS = 30 * 60
+
+        /**
+         * Reader-side guard, slightly above the auto-stop cap: the recorder
+         * stops on an elapsed-time check between buffer reads, so the file
+         * can legitimately run a few chunks past MAX_CLIP_SECONDS. Only
+         * files that never went through the cap (pre-cap orphans, imported
+         * audio fed to the bench) trip this.
+         */
+        internal const val MAX_READ_SAMPLES = (MAX_CLIP_SECONDS + 60) * 16_000
     }
 
     /**
@@ -38,27 +59,22 @@ class Transcriber(private val context: Context) {
      * re-run fetch-models), in which case VAD is silently unavailable and
      * transcription behaves exactly as before.
      */
-    private suspend fun vadModelPath(): String? {
-        val f = File(context.filesDir, "ggml-silero-v5.1.2.bin")
-        if (f.exists() && f.length() > 0L) return f.absolutePath
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                context.assets.open(VAD_ASSET).use { input ->
-                    f.outputStream().use { input.copyTo(it) }
-                }
-                f.absolutePath
-            }.getOrElse { f.delete(); null }
-        }
+    private suspend fun vadModelPath(): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            AtomicMaterialize.ensure(File(context.filesDir, "ggml-silero-v5.1.2.bin")) {
+                context.assets.open(VAD_ASSET)
+            }.absolutePath
+        }.getOrNull() // asset absent in older checkouts: VAD silently unavailable
     }
 
     private suspend fun ensureContext(): Long = mutex.withLock {
         if (ctxPtr != 0L) return ctxPtr
-        val modelFile = File(context.filesDir, "ggml-base.en-q5_1.bin")
-        if (!modelFile.exists() || modelFile.length() == 0L) {
-            withContext(Dispatchers.IO) {
-                context.assets.open(ASSET).use { input ->
-                    modelFile.outputStream().use { input.copyTo(it) }
-                }
+        // Atomic copy: a process death mid-write must never leave a
+        // truncated model that passes existence checks and bricks
+        // transcription on every subsequent launch.
+        val modelFile = withContext(Dispatchers.IO) {
+            AtomicMaterialize.ensure(File(context.filesDir, "ggml-base.en-q5_1.bin")) {
+                context.assets.open(ASSET)
             }
         }
         ctxPtr = withContext(Dispatchers.Default) { WhisperBridge.initContext(modelFile.absolutePath) }
@@ -75,7 +91,7 @@ class Transcriber(private val context: Context) {
      */
     suspend fun transcribe(wav: File, useVad: Boolean): String {
         val ctx = ensureContext()
-        val samples = withContext(Dispatchers.IO) { WavReader.readFloatPcm(wav) }
+        val samples = withContext(Dispatchers.IO) { WavReader.readFloatPcm(wav, MAX_READ_SAMPLES) }
         if (samples.isEmpty()) return ""
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
         val vadPath = if (useVad) vadModelPath() else null
@@ -86,7 +102,13 @@ class Transcriber(private val context: Context) {
         }
     }
 
-    fun release() {
+    /**
+     * Frees the native context. Suspends for the same mutex transcription
+     * holds: freeing mid-transcribe is a native use-after-free, and a
+     * lifecycle method on a class whose whole design is "one context,
+     * serialized" doesn't get to skip the serialization.
+     */
+    suspend fun release() = mutex.withLock {
         if (ctxPtr != 0L) { WhisperBridge.freeContext(ctxPtr); ctxPtr = 0 }
     }
 }

@@ -265,13 +265,12 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })
 
     transferStatus?.let { status ->
-        val inFlight = status.endsWith("...")
         AlertDialog(
-            onDismissRequest = { if (!inFlight) vm.dismissTransferStatus() },
+            onDismissRequest = { if (!status.inFlight) vm.dismissTransferStatus() },
             title = { Text("Journal transfer") },
-            text = { Text(status) },
+            text = { Text(status.message) },
             confirmButton = {
-                if (!inFlight) TextButton(onClick = vm::dismissTransferStatus) { Text("Close") }
+                if (!status.inFlight) TextButton(onClick = vm::dismissTransferStatus) { Text("Close") }
             },
         )
     }

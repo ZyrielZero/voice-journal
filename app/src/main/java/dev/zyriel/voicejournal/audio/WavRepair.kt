@@ -71,6 +71,12 @@ object WavRepair {
         if (dataBytes == 0L) {
             return Outcome.Unrecoverable("no audio data")
         }
+        // Mirror WavWriter's ceiling: it refuses to finalize a header past
+        // this size, so a larger file cannot be one of ours and patching
+        // its sizes would silently truncate through Int overflow.
+        if (dataBytes > Int.MAX_VALUE - 36) {
+            return Outcome.Unrecoverable("data exceeds WAV size limit; not a WavWriter file")
+        }
 
         val declaredData = h.getInt(40).toLong()
         val declaredRiff = h.getInt(4).toLong()

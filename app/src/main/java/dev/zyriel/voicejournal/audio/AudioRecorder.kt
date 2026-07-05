@@ -20,10 +20,10 @@ import java.io.File
  * [WavWriter]. The capture loop runs on Dispatchers.IO; the UI observes
  * [elapsedMs] and never blocks.
  *
- * UNVERIFIED ON HARDWARE. This class compiles against the Android SDK but has
- * not been executed on a device. AudioRecord behavior (buffer sizing, actual
- * sample rate support, permission timing) must be validated on a real phone
- * before step 1 is marked done.
+ * Hardware-verified (Pixel 10 Pro XL): capture including screen-off recording
+ * passed the robustness checklist. Error paths (State.Error) are observed by
+ * RecordingController, which salvages partial audio; a real mid-capture
+ * AudioRecord failure has not been reproduced on hardware.
  */
 class AudioRecorder(private val scope: CoroutineScope) {
 
