@@ -1,5 +1,11 @@
-import java.io.ByteArrayOutputStream
 import java.util.Properties
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.Copy
 
 plugins {
     id("com.android.application")
@@ -7,6 +13,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
+
+val sha = runCatching {
+    providers.exec {
+        commandLine("git", "rev-parse", "--short", "HEAD")
+    }.standardOutput.asText.get().trim()
+}.getOrDefault("nogit")
 
 android {
     namespace = "dev.zyriel.voicejournal"
@@ -21,11 +33,6 @@ android {
         versionName = "0.4.1"
         ndk { abiFilters += "arm64-v8a" }
 
-        val sha = runCatching {
-            val out = ByteArrayOutputStream()
-            project.exec { commandLine("git", "rev-parse", "--short", "HEAD"); standardOutput = out }
-            out.toString().trim()
-        }.getOrDefault("nogit")
         buildConfigField("String", "GIT_SHA", "\"$sha\"")
         externalNativeBuild {
             cmake { arguments += "-DANDROID_STL=c++_static" }
@@ -89,14 +96,39 @@ android {
     // The About screen renders the license texts from assets. They are
     // copied from the repo-root originals at build time so there is one
     // source of truth; nothing is hand-duplicated into assets.
-    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/licenseAssets"))
 }
 
-val copyLicenseAssets = tasks.register<Copy>("copyLicenseAssets") {
-    from(rootProject.file("THIRD_PARTY_NOTICES.md"), rootProject.file("LICENSE"))
-    into(layout.buildDirectory.dir("generated/licenseAssets/licenses"))
+abstract class CopyLicenseAssets : DefaultTask() {
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @get:InputFiles
+    abstract val licenseFiles: ConfigurableFileCollection
+
+    @TaskAction
+    fun run() {
+        val dest = outputDir.get().asFile.resolve("licenses")
+        dest.mkdirs()
+        licenseFiles.forEach { it.copyTo(dest.resolve(it.name), overwrite = true) }
+    }
 }
-tasks.named("preBuild") { dependsOn(copyLicenseAssets) }
+
+val copyLicenseAssets = tasks.register<CopyLicenseAssets>("copyLicenseAssets") {
+    outputDir.set(layout.buildDirectory.dir("generated/licenseAssets"))
+    licenseFiles.from(
+        rootProject.file("THIRD_PARTY_NOTICES.md"),
+        rootProject.file("LICENSE")
+    )
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            copyLicenseAssets,
+            CopyLicenseAssets::outputDir
+        )
+    }
+}
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
