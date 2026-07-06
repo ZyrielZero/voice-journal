@@ -38,6 +38,14 @@ object WavReader {
             require(h.getShort(22).toInt() == 1) { "Not mono" }
             require(h.getInt(24) == WavWriter.SAMPLE_RATE) { "Not 16 kHz" }
             require(h.getShort(34).toInt() == 16) { "Not 16-bit" }
+            // The canonical header puts the data chunk at offset 36. A WAV
+            // from any other writer can carry a metadata chunk there (ffmpeg
+            // emits LIST/INFO), and reading its size field as the data size
+            // silently yields a few samples of ASCII-as-audio. Foreign
+            // layouts must fail loudly, per this function's contract.
+            require(ascii(header, 36, 4) == "data") {
+                "Expected data chunk at offset 36, found '${ascii(header, 36, 4)}' (non-canonical WAV)"
+            }
 
             val dataSize = h.getInt(40)
             require(dataSize >= 0 && WavWriter.HEADER_SIZE + dataSize.toLong() <= file.length()) {

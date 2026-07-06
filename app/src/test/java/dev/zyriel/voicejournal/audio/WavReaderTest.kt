@@ -65,4 +65,40 @@ class WavReaderTest {
             assertEquals(src[i] / 32768f, pcm[i], 0f)
         }
     }
+
+    @Test fun foreignChunkAtDataOffsetIsRejectedLoudly() {
+        // ffmpeg (and other writers) place a LIST/INFO metadata chunk where
+        // the canonical header has the data chunk. Reading its size field as
+        // the data size silently yields milliseconds of ASCII-as-audio; the
+        // reader must refuse instead. This is the exact header that shipped
+        // in the first cut of the accuracy clips.
+        val canonical = tempWav(ShortArray(100) { 5 }).readBytes()
+        val listChunk = byteArrayOf(
+            'L'.code.toByte(), 'I'.code.toByte(), 'S'.code.toByte(), 'T'.code.toByte(),
+            26, 0, 0, 0,
+        ) + ByteArray(26) { 'x'.code.toByte() }
+        val f = File.createTempFile("foreign", ".wav").apply {
+            deleteOnExit()
+            // canonical header (36 bytes) + LIST chunk + original data chunk
+            writeBytes(canonical.copyOfRange(0, 36) + listChunk + canonical.copyOfRange(36, canonical.size))
+        }
+        val ex = assertThrows(IllegalArgumentException::class.java) { WavReader.readFloatPcm(f) }
+        org.junit.Assert.assertTrue(ex.message!!.contains("LIST"))
+    }
+
+    @Test fun committedAccuracyClipsAreReadable() {
+        // The accuracy suite feeds these exact files to the transcriber on a
+        // device; a clip the reader cannot parse (or parses into the wrong
+        // sample count) must fail here in CI, not on hardware mid-benchmark.
+        val expected = mapOf(
+            "clip10s.wav" to 166_960,
+            "clip30s.wav" to 477_440,
+            "clip60s.wav" to 965_680,
+        )
+        for ((name, samples) in expected) {
+            val f = File("src/debug/assets/accuracy/$name")
+            org.junit.Assert.assertTrue("committed clip missing: $name", f.exists())
+            assertEquals("sample count for $name", samples, WavReader.readFloatPcm(f).size)
+        }
+    }
 }
