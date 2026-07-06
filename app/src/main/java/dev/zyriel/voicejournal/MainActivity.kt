@@ -140,6 +140,27 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                                 },
                             )
                         }
+                        var accStatus by remember { mutableStateOf<String?>(null) }
+                        TextButton(onClick = {
+                            if (accStatus == null) {
+                                accStatus = "starting"
+                                Thread {
+                                    val f = dev.zyriel.voicejournal.bench.AccuracySuite(ctx)
+                                        .runAll { s -> accStatus = s }
+                                    accStatus = "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                }.start()
+                            }
+                        }) { Text("Acc") }
+                        accStatus?.let {
+                            AlertDialog(
+                                onDismissRequest = { if (it.startsWith("Saved")) accStatus = null },
+                                title = { Text("Accuracy") },
+                                text = { Text(it) },
+                                confirmButton = {
+                                    if (it.startsWith("Saved")) TextButton(onClick = { accStatus = null }) { Text("Close") }
+                                },
+                            )
+                        }
                     }
                     TextButton(onClick = onCycleTheme) {
                         Text(when (themeMode) {
