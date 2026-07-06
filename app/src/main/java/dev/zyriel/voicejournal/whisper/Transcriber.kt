@@ -18,7 +18,7 @@ class Transcriber(private val context: Context) {
 
     companion object {
         private const val ASSET = "models/ggml-base.en-q5_1.bin"
-        private const val VAD_ASSET = "models/ggml-silero-v5.1.2.bin"
+        internal const val VAD_ASSET = "models/ggml-silero-v5.1.2.bin"
 
         /**
          * Longest entry the pipeline will record and transcribe. Bounds the

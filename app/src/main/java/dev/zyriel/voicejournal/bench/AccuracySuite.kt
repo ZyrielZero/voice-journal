@@ -24,7 +24,30 @@ import java.io.File
  */
 class AccuracySuite(private val context: Context) {
 
+    companion object {
+        /**
+         * Fails loudly when the VAD model asset can't be opened. [Transcriber]
+         * deliberately degrades to no-VAD when the asset is missing — right
+         * for normal transcription, poison here: every vad_on row would
+         * silently score a no-VAD run and the off/on comparison this suite
+         * exists to produce would look meaningful while measuring nothing.
+         */
+        fun requireVadAsset(open: (String) -> Unit) {
+            try {
+                open(Transcriber.VAD_ASSET)
+            } catch (e: Exception) {
+                throw IllegalStateException(
+                    "VAD model asset '${Transcriber.VAD_ASSET}' is missing; " +
+                        "vad_on rows would silently run without VAD. " +
+                        "Run scripts/fetch-models and rebuild.",
+                    e,
+                )
+            }
+        }
+    }
+
     fun runAll(onProgress: (String) -> Unit): File = runBlocking {
+        requireVadAsset { context.assets.open(it).close() }
         val manifest = AccuracyManifest.parse(
             context.assets.open("accuracy/manifest.json").use { it.readBytes().decodeToString() }
         )

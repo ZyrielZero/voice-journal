@@ -123,20 +123,28 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                         TextButton(onClick = {
                             if (benchStatus == null) {
                                 benchStatus = "starting"
+                                // try/catch, not crash visibility: an uncaught exception on a
+                                // plain Thread kills the process, which reads as a hang when
+                                // the failure happens behind a progress dialog.
                                 Thread {
-                                    val f = dev.zyriel.voicejournal.bench.BenchmarkSuite(ctx)
-                                        .runAll { s -> benchStatus = s }
-                                    benchStatus = "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                    benchStatus = try {
+                                        val f = dev.zyriel.voicejournal.bench.BenchmarkSuite(ctx)
+                                            .runAll { s -> benchStatus = s }
+                                        "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                    } catch (e: Exception) {
+                                        "FAILED: ${e.message}"
+                                    }
                                 }.start()
                             }
                         }) { Text("Bench") }
                         benchStatus?.let {
+                            val done = it.startsWith("Saved") || it.startsWith("FAILED")
                             AlertDialog(
-                                onDismissRequest = { if (it.startsWith("Saved")) benchStatus = null },
+                                onDismissRequest = { if (done) benchStatus = null },
                                 title = { Text("Benchmark") },
                                 text = { Text(it) },
                                 confirmButton = {
-                                    if (it.startsWith("Saved")) TextButton(onClick = { benchStatus = null }) { Text("Close") }
+                                    if (done) TextButton(onClick = { benchStatus = null }) { Text("Close") }
                                 },
                             )
                         }
@@ -145,19 +153,24 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                             if (accStatus == null) {
                                 accStatus = "starting"
                                 Thread {
-                                    val f = dev.zyriel.voicejournal.bench.AccuracySuite(ctx)
-                                        .runAll { s -> accStatus = s }
-                                    accStatus = "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                    accStatus = try {
+                                        val f = dev.zyriel.voicejournal.bench.AccuracySuite(ctx)
+                                            .runAll { s -> accStatus = s }
+                                        "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                    } catch (e: Exception) {
+                                        "FAILED: ${e.message}"
+                                    }
                                 }.start()
                             }
                         }) { Text("Acc") }
                         accStatus?.let {
+                            val done = it.startsWith("Saved") || it.startsWith("FAILED")
                             AlertDialog(
-                                onDismissRequest = { if (it.startsWith("Saved")) accStatus = null },
+                                onDismissRequest = { if (done) accStatus = null },
                                 title = { Text("Accuracy") },
                                 text = { Text(it) },
                                 confirmButton = {
-                                    if (it.startsWith("Saved")) TextButton(onClick = { accStatus = null }) { Text("Close") }
+                                    if (done) TextButton(onClick = { accStatus = null }) { Text("Close") }
                                 },
                             )
                         }
