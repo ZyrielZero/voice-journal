@@ -42,13 +42,15 @@ class Transcriber(private val context: Context) {
     }
 
     /**
-     * Opt-in VAD silence trim via whisper.cpp's built-in Silero graph.
-     * DEFAULT OFF: enabling this app-wide is a performance/accuracy claim,
-     * and that claim needs committed before/after benchmark JSON from real
-     * hardware first (the benchmark suite measures both paths). Turning it
-     * on is a one-line change here once the numbers justify it.
+     * VAD silence trim via whisper.cpp's built-in Silero graph. Enabled by
+     * default on committed device numbers (vj-accuracy-ce5f560.json,
+     * vj-benchmark-ce5f560.json): zero deletions in every accuracy row —
+     * the trim eats no words — with corpus WER improving 6.31% -> 4.50%,
+     * and the pause-heavy bench clip (50% silence, the realistic journal
+     * profile) dropping 10.9s -> 2.3s because whisper grinds on silence.
+     * Dense speech pays ~1.4x; journal entries are not dense speech.
      */
-    @Volatile var vadEnabled: Boolean = false
+    @Volatile var vadEnabled: Boolean = true
 
     private var ctxPtr: Long = 0
     private val mutex = Mutex()
