@@ -1,0 +1,27 @@
+{
+  "meta": {
+    "git_sha": "ce5f560",
+    "version": "0.4.1",
+    "timestamp": "2026-07-05T21:26:52-0400",
+    "device": "Google Pixel 10 Pro XL",
+    "soc_abi": "arm64-v8a",
+    "cores": "8",
+    "android": "API 37",
+    "environment": "device"
+  },
+  "results": [
+    {"name": "embed.init", "median_ms": 357, "runs_ms": [357], "extra": {"kind": "one-shot"}},
+    {"name": "embed.short", "median_ms": 5, "runs_ms": [6,5,5,4,4], "extra": {"chars": "30"}},
+    {"name": "embed.typical", "median_ms": 8, "runs_ms": [7,9,8,9,8], "extra": {"chars": "163"}},
+    {"name": "embed.max", "median_ms": 41, "runs_ms": [42,40,41,41,40], "extra": {"chars": "4310"}},
+    {"name": "search.top20.n100", "median_ms": 0, "runs_ms": [1,0,0,0,0], "extra": {"dims": "384", "k": "20"}},
+    {"name": "search.top20.n1000", "median_ms": 4, "runs_ms": [4,4,4,4,4], "extra": {"dims": "384", "k": "20"}},
+    {"name": "search.top20.n5000", "median_ms": 10, "runs_ms": [10,10,9,10,10], "extra": {"dims": "384", "k": "20"}},
+    {"name": "whisper.load_and_first_run", "median_ms": 1343, "runs_ms": [1343], "extra": {"kind": "one-shot"}},
+    {"name": "whisper.clip10s", "median_ms": 1506, "runs_ms": [1506,1499,1565], "extra": {"clip_s": "10", "realtime_factor": "0.151"}},
+    {"name": "whisper.clip30s", "median_ms": 1675, "runs_ms": [1675,1559,1735], "extra": {"clip_s": "30", "realtime_factor": "0.056"}},
+    {"name": "whisper.clip60s", "median_ms": 3368, "runs_ms": [3368,3410,3176], "extra": {"clip_s": "60", "realtime_factor": "0.056"}},
+    {"name": "whisper.clip30s_gaps.vad_off", "median_ms": 10868, "runs_ms": [10855,12868,10868], "extra": {"clip_s": "30", "silence_ratio": "0.5", "synthetic": "true"}},
+    {"name": "whisper.clip30s_gaps.vad_on", "median_ms": 2316, "runs_ms": [2316,2144,2347], "extra": {"clip_s": "30", "silence_ratio": "0.5", "synthetic": "true"}}
+  ]
+}

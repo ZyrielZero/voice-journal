@@ -1,0 +1,24 @@
+{
+  "meta": {
+    "git_sha": "ce5f560",
+    "version": "0.4.1",
+    "timestamp": "2026-07-05T21:23:30-0400",
+    "device": "Google Pixel 10 Pro XL",
+    "soc_abi": "arm64-v8a",
+    "cores": "8",
+    "android": "API 37",
+    "environment": "device",
+    "model": "ggml-base.en-q5_1",
+    "suite": "accuracy"
+  },
+  "results": [
+    {"name": "acc.clip10s.wav.vad_off", "median_ms": 1946, "runs_ms": [1946], "extra": {"clip_s": "10.44", "wer": "0.0714", "substitutions": "2", "deletions": "0", "insertions": "0", "reference_words": "28", "hypothesis": "He hoped there would be stew for dinner, turnips and carrots and bruised potatoes and fat mutton pieces to be ladled out in thick, peppered flower-faton sauce."}},
+    {"name": "acc.clip10s.wav.vad_on", "median_ms": 2722, "runs_ms": [2722], "extra": {"clip_s": "10.44", "wer": "0.0714", "substitutions": "2", "deletions": "0", "insertions": "0", "reference_words": "28", "hypothesis": "He hoped there would be stew for dinner, turnips and carrots and bruised potatoes and fat mutton pieces to be ladled out in thick peppered flower-faton sauce."}},
+    {"name": "acc.clip30s.wav.vad_off", "median_ms": 2775, "runs_ms": [2775], "extra": {"clip_s": "29.84", "wer": "0.0380", "substitutions": "3", "deletions": "0", "insertions": "0", "reference_words": "79", "hypothesis": "They are beyond all other works than I know existing, dependent for their effect on low subdued tones, their favorite choice in time of day being either dawn or twilight, and even their brightest sunsets produced chiefly out of grey paper. It may be that a great colorless will use his utmost force of color as a singer his full power of voice, but loud or low, the virtue is in both cases always in refinement, never in loudness."}},
+    {"name": "acc.clip30s.wav.vad_on", "median_ms": 4566, "runs_ms": [4566], "extra": {"clip_s": "29.84", "wer": "0.0380", "substitutions": "3", "deletions": "0", "insertions": "0", "reference_words": "79", "hypothesis": "They are beyond all other works than I know existing, dependent for their effect on low subdued tones, their favorite choice in time of day being either dawn or twilight, and even their brightest sunsets produced chiefly out of grey paper. It may be that a great colorless will use his utmost force of color as a singer his full power of voice, but loud or low, the virtue is in both cases always in refinement, never in loudness."}},
+    {"name": "acc.clip60s.wav.vad_off", "median_ms": 6190, "runs_ms": [6190], "extra": {"clip_s": "60.36", "wer": "0.0783", "substitutions": "7", "deletions": "0", "insertions": "2", "reference_words": "115", "hypothesis": "Those pretty wrongs that liberty commits. When I am some time absent from thy heart, Thy beauty and thy years full well befits, For still temptation follows where thou art. I, me, no matter then, Although my foot did stand, upon the farthest earth, removed from thee, For nimble thought can jump, Both see and land, as soon as think the place where he would be. But ah, thought kills me that I am not thought, To leap large lengths of miles when thou art gone, But that so much of earth and water rot, I must attend, times leisure with my moan, Receiving not by elements so slow, but heavy tears, Badges of either's woe, you"}},
+    {"name": "acc.clip60s.wav.vad_on", "median_ms": 9278, "runs_ms": [9278], "extra": {"clip_s": "60.36", "wer": "0.0435", "substitutions": "4", "deletions": "0", "insertions": "1", "reference_words": "115", "hypothesis": "Those pretty wrongs that liberty commits, when I am sometime absent from thy heart, thy beauty, and thy years full well befits, for still temptation follows where thou art. I me, no matter then, although my foot did stand, upon the farthest earth, removed from thee, for nimble thought can jump both sea and land, as soon as think the place where he would be. be, but ah, thought kills me that I am not thought, to leap large lengths of miles when thou art gone, but that so much of earth and water wrought, I must attend, times leisure with my moan, receiving not, by elements so slow, but heavy tears, badges of either's woe."}},
+    {"name": "acc.overall.vad_off", "median_ms": 0, "runs_ms": [0], "extra": {"wer": "0.0631", "substitutions": "12", "deletions": "0", "insertions": "2", "reference_words": "222", "corpus": "LibriSpeech test-clean subset (see manifest)"}},
+    {"name": "acc.overall.vad_on", "median_ms": 0, "runs_ms": [0], "extra": {"wer": "0.0450", "substitutions": "9", "deletions": "0", "insertions": "1", "reference_words": "222", "corpus": "LibriSpeech test-clean subset (see manifest)"}}
+  ]
+}
