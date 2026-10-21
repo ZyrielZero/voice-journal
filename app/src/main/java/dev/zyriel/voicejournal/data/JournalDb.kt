@@ -29,8 +29,13 @@ interface JournalDao {
     fun observeAll(): Flow<List<JournalEntry>>
     @Query("SELECT * FROM entries")
     suspend fun allOnce(): List<JournalEntry>
-    @Query("SELECT * FROM entries WHERE embedding IS NULL OR embeddingModel != :model")
+    @Query("SELECT * FROM entries WHERE embedding IS NULL OR embeddingModel IS NOT :model")
     suspend fun needingEmbedding(model: String): List<JournalEntry>
+    // STUB (wp2): contract C2 methods, WP3 owns this file. Drop at merge.
+    @Query("UPDATE entries SET embedding = :embedding, embeddingModel = :model WHERE id = :id AND transcript = :transcript")
+    suspend fun setEmbeddingIfUnchanged(id: Long, transcript: String, embedding: FloatArray, model: String): Int
+    @Query("SELECT COUNT(*) FROM entries WHERE audioPath = :path")
+    suspend fun countByAudioPath(path: String): Int
 }
 
 @Database(entities = [JournalEntry::class], version = 2, exportSchema = false)
