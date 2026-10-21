@@ -1,17 +1,26 @@
 package dev.zyriel.voicejournal
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.os.SystemClock
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.animateColor
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,17 +51,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.pipeline.RecordingController.PipelineState
@@ -62,38 +79,242 @@ import dev.zyriel.voicejournal.ui.theme.EmberPulseHigh
 import dev.zyriel.voicejournal.ui.theme.ThemeMode
 import dev.zyriel.voicejournal.ui.theme.ThemePrefs
 import dev.zyriel.voicejournal.ui.theme.VoiceJournalTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class MainActivity : ComponentActivity() {
+/**
+ * Privacy settings, stored beside the theme in the same "settings" prefs.
+ * Both default on: transcripts are private by default, and the user opts
+ * out rather than in.
+ */
+object PrivacyPrefs {
+    private const val PREFS = "settings"
+    private const val KEY_HIDE = "hide_in_recents"
+    private const val KEY_LOCK = "app_lock"
+    private fun prefs(c: Context) = c.getSharedPreferences(PREFS, 0)
+    fun hideInRecents(c: Context) = prefs(c).getBoolean(KEY_HIDE, true)
+    fun setHideInRecents(c: Context, on: Boolean) = prefs(c).edit { putBoolean(KEY_HIDE, on) }
+    fun lockEnabled(c: Context) = prefs(c).getBoolean(KEY_LOCK, true)
+    fun setLockEnabled(c: Context, on: Boolean) = prefs(c).edit { putBoolean(KEY_LOCK, on) }
+}
+
+/**
+ * Process-wide lock state. A new process starts locked, so a cold start
+ * always asks; rotation and other Activity recreations keep the unlock.
+ */
+private object LockState {
+    @Volatile var unlocked = false
+    /** elapsedRealtime when the app left the screen, 0 while visible. */
+    @Volatile var backgroundedAt = 0L
+    /** True while a prompt is up, so a recreated Activity does not stack a second one. */
+    @Volatile var prompting = false
+}
+
+class MainActivity : FragmentActivity() {
+
+    private var locked by mutableStateOf(false)
+    private var lockMessage by mutableStateOf<String?>(null)
+    private var lockEnabled by mutableStateOf(true)
+    private var hideInRecents by mutableStateOf(true)
+    private lateinit var prompt: BiometricPrompt
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        hideInRecents = PrivacyPrefs.hideInRecents(this)
+        lockEnabled = PrivacyPrefs.lockEnabled(this)
+        applySecureFlag(hideInRecents)
+        // Created in onCreate, as BiometricPrompt requires, so a prompt
+        // that survives rotation reconnects to this Activity's callback.
+        prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this), lockCallback)
+        locked = shouldLock()
+
         setContent {
             var themeMode by remember { mutableStateOf(ThemePrefs.load(this)) }
+            // Keeps the journal's saved UI state (an open edit, its draft)
+            // while the lock screen replaces it, so relocking loses nothing.
+            val saveable = rememberSaveableStateHolder()
             VoiceJournalTheme(themeMode) {
-                JournalScreen(
-                    themeMode = themeMode,
-                    onCycleTheme = {
-                        themeMode = themeMode.next()
-                        ThemePrefs.save(this, themeMode)
-                    }
-                )
+                if (locked) {
+                    LockScreen(message = lockMessage, onUnlock = ::authenticate)
+                } else saveable.SaveableStateProvider("journal") {
+                    JournalScreen(
+                        themeMode = themeMode,
+                        onCycleTheme = {
+                            themeMode = themeMode.next()
+                            ThemePrefs.save(this, themeMode)
+                        },
+                        privacy = PrivacySettings(
+                            lockEnabled = lockEnabled,
+                            lockAvailable = canAuthenticate(),
+                            hideInRecents = hideInRecents,
+                            onToggleLock = ::toggleLock,
+                            onToggleHide = ::toggleHide,
+                        ),
+                    )
+                }
             }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val left = LockState.backgroundedAt
+        if (left != 0L && SystemClock.elapsedRealtime() - left >= RELOCK_AFTER_MS) {
+            LockState.unlocked = false
+        }
+        LockState.backgroundedAt = 0L
+        locked = shouldLock()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (locked && !LockState.prompting) authenticate()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations) LockState.backgroundedAt = SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * Locks only when the user wants it and the device can actually check
+     * them. With no screen lock enrolled (or no hardware) the gate is
+     * skipped entirely: the app must never lock its owner out of their
+     * own journal.
+     */
+    private fun shouldLock(): Boolean =
+        lockEnabled && !LockState.unlocked && canAuthenticate()
+
+    private fun canAuthenticate(): Boolean =
+        BiometricManager.from(this).canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
+
+    private fun authenticate() {
+        if (!shouldLock()) { unlock(); return }
+        lockMessage = null
+        LockState.prompting = true
+        prompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Unlock Voice Journal")
+                .setSubtitle("Your entries stay hidden until you confirm it's you.")
+                .setAllowedAuthenticators(AUTHENTICATORS)
+                .setConfirmationRequired(false)
+                .build()
+        )
+    }
+
+    private fun unlock() {
+        LockState.unlocked = true
+        locked = false
+        lockMessage = null
+    }
+
+    private val lockCallback = object : BiometricPrompt.AuthenticationCallback() {
+        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+            LockState.prompting = false
+            unlock()
+        }
+
+        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+            LockState.prompting = false
+            when {
+                // The screen lock was removed or the hardware went away
+                // since the check: fail open rather than strand the user.
+                !canAuthenticate() -> unlock()
+                // System cancel (the app left the screen): ask again on return.
+                errorCode == BiometricPrompt.ERROR_CANCELED -> Unit
+                errorCode == BiometricPrompt.ERROR_USER_CANCELED -> lockMessage = null
+                else -> lockMessage = errString.toString()
+            }
+        }
+        // onAuthenticationFailed is one rejected attempt; the prompt stays up.
+    }
+
+    private fun toggleLock() {
+        lockEnabled = !lockEnabled
+        PrivacyPrefs.setLockEnabled(this, lockEnabled)
+        // Turning it on from inside the app means the user is present.
+        if (lockEnabled) LockState.unlocked = true
+    }
+
+    private fun toggleHide() {
+        hideInRecents = !hideInRecents
+        PrivacyPrefs.setHideInRecents(this, hideInRecents)
+        applySecureFlag(hideInRecents)
+    }
+
+    /** Blanks recents thumbnails and blocks screenshots and screen shares. */
+    private fun applySecureFlag(on: Boolean) {
+        if (on) window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
+    private companion object {
+        /** Away this long and the journal locks again on return. */
+        const val RELOCK_AFTER_MS = 5 * 60 * 1000L
+
+        /**
+         * Strong biometrics or the device PIN, pattern or password. API 28
+         * and 29 reject BIOMETRIC_STRONG combined with DEVICE_CREDENTIAL,
+         * so those (and older) releases accept any enrolled biometric or
+         * the credential.
+         */
+        val AUTHENTICATORS =
+            if (Build.VERSION.SDK_INT >= 30) BIOMETRIC_STRONG or DEVICE_CREDENTIAL
+            else BIOMETRIC_WEAK or DEVICE_CREDENTIAL
+    }
+}
+
+/** The privacy toggles shown in the overflow menu. */
+data class PrivacySettings(
+    val lockEnabled: Boolean,
+    /** False when the device has no screen lock, so the lock cannot engage. */
+    val lockAvailable: Boolean,
+    val hideInRecents: Boolean,
+    val onToggleLock: () -> Unit,
+    val onToggleHide: () -> Unit,
+)
+
+@Composable
+private fun LockScreen(message: String?, onUnlock: () -> Unit) {
+    Box(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Voice Journal is locked", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                message ?: "Recording and transcription keep running while locked.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(24.dp))
+            Button(onClick = onUnlock) { Text("Unlock") }
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalViewModel = viewModel()) {
-    val entries by vm.entries.collectAsState()
-    val pipeline by vm.pipeline.collectAsState()
-    val query by vm.query.collectAsState()
-    val playing by vm.player.playingFile.collectAsState()
-    val transferStatus by vm.transferStatus.collectAsState()
-    val elapsed by vm.recorder.elapsedMs.collectAsState()
+fun JournalScreen(
+    themeMode: ThemeMode,
+    onCycleTheme: () -> Unit,
+    privacy: PrivacySettings,
+    vm: JournalViewModel = viewModel(),
+) {
+    val entries by vm.entries.collectAsStateWithLifecycle()
+    val allEntries by vm.allEntries.collectAsStateWithLifecycle()
+    val pipeline by vm.pipeline.collectAsStateWithLifecycle()
+    val query by vm.query.collectAsStateWithLifecycle()
+    val playing by vm.player.playingFile.collectAsStateWithLifecycle()
+    val transferStatus by vm.transferStatus.collectAsStateWithLifecycle()
+    val elapsed by vm.recorder.elapsedMs.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     // POST_NOTIFICATIONS is requested alongside the mic so the recording
@@ -109,8 +330,11 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
         else arrayOf(Manifest.permission.RECORD_AUDIO)
     }
 
-    var selected by remember { mutableStateOf<JournalEntry?>(null) }
-    var showAbout by remember { mutableStateOf(false) }
+    // By id, not by entry: JournalEntry is not Parcelable (it holds a
+    // FloatArray), and an id survives rotation and re-resolves against the
+    // current list, so an entry deleted meanwhile simply closes the dialog.
+    var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var showAbout by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -118,23 +342,30 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                 title = { Text("Voice Journal", style = MaterialTheme.typography.headlineMedium) },
                 actions = {
                     if (dev.zyriel.voicejournal.BuildConfig.DEBUG) {
+                        // Debug-only suites. They run on Default with the
+                        // application context (never the Activity) and post
+                        // progress back to Main, so a rotation mid-run leaks
+                        // nothing and no Compose state is written off-thread.
+                        // try/catch, not crash visibility: an uncaught
+                        // exception would kill the process, which reads as a
+                        // hang behind a progress dialog.
+                        val appCtx = LocalContext.current.applicationContext
+                        val benchScope = rememberCoroutineScope()
                         var benchStatus by remember { mutableStateOf<String?>(null) }
-                        val ctx = LocalContext.current
                         TextButton(onClick = {
                             if (benchStatus == null) {
                                 benchStatus = "starting"
-                                // try/catch, not crash visibility: an uncaught exception on a
-                                // plain Thread kills the process, which reads as a hang when
-                                // the failure happens behind a progress dialog.
-                                Thread {
-                                    benchStatus = try {
-                                        val f = dev.zyriel.voicejournal.bench.BenchmarkSuite(ctx)
-                                            .runAll { s -> benchStatus = s }
-                                        "Saved: ${f.name} (adb pull ${f.absolutePath})"
-                                    } catch (e: Exception) {
-                                        "FAILED: ${e.message}"
+                                benchScope.launch {
+                                    benchStatus = withContext(Dispatchers.Default) {
+                                        try {
+                                            val f = dev.zyriel.voicejournal.bench.BenchmarkSuite(appCtx)
+                                                .runAll { s -> benchScope.launch { benchStatus = s } }
+                                            "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                        } catch (e: Exception) {
+                                            "FAILED: ${e.message}"
+                                        }
                                     }
-                                }.start()
+                                }
                             }
                         }) { Text("Bench") }
                         benchStatus?.let {
@@ -152,15 +383,17 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                         TextButton(onClick = {
                             if (accStatus == null) {
                                 accStatus = "starting"
-                                Thread {
-                                    accStatus = try {
-                                        val f = dev.zyriel.voicejournal.bench.AccuracySuite(ctx)
-                                            .runAll { s -> accStatus = s }
-                                        "Saved: ${f.name} (adb pull ${f.absolutePath})"
-                                    } catch (e: Exception) {
-                                        "FAILED: ${e.message}"
+                                benchScope.launch {
+                                    accStatus = withContext(Dispatchers.Default) {
+                                        try {
+                                            val f = dev.zyriel.voicejournal.bench.AccuracySuite(appCtx)
+                                                .runAll { s -> benchScope.launch { accStatus = s } }
+                                            "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                        } catch (e: Exception) {
+                                            "FAILED: ${e.message}"
+                                        }
                                     }
-                                }.start()
+                                }
                             }
                         }) { Text("Acc") }
                         accStatus?.let {
@@ -207,6 +440,20 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                                     menuOpen = false
                                     importLauncher.launch(arrayOf("application/zip"))
                                 },
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(when {
+                                        !privacy.lockEnabled -> "App lock: off"
+                                        privacy.lockAvailable -> "App lock: on"
+                                        else -> "App lock: on (needs a screen lock)"
+                                    })
+                                },
+                                onClick = { menuOpen = false; privacy.onToggleLock() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (privacy.hideInRecents) "Hide in recents: on" else "Hide in recents: off") },
+                                onClick = { menuOpen = false; privacy.onToggleHide() },
                             )
                             DropdownMenuItem(
                                 text = { Text("About") },
@@ -283,12 +530,12 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize().padding(bottom = 8.dp)
                 ) {
-                    items(entries) { entry ->
+                    items(entries, key = { it.id }) { entry ->
                         EntryCard(
                             entry = entry,
                             isPlaying = playing == File(entry.audioPath),
                             onPlay = { vm.play(entry) },
-                            onOpen = { selected = entry },
+                            onOpen = { selectedId = entry.id },
                         )
                     }
                 }
@@ -309,12 +556,21 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
         )
     }
 
-    selected?.let { entry ->
+    selectedId?.let { id ->
+        // Resolved against the unfiltered list, so a search re-rank cannot
+        // close the dialog. Null means Room has not emitted yet (after
+        // process death); an entry missing from a loaded list was deleted.
+        val all = allEntries ?: return@let
+        val entry = all.firstOrNull { it.id == id }
+        if (entry == null) {
+            LaunchedEffect(id) { selectedId = null }
+            return@let
+        }
         EntryDialog(
             entry = entry,
-            onDismiss = { selected = null },
-            onSave = { text -> vm.updateTranscript(entry, text); selected = null },
-            onDelete = { vm.delete(entry); selected = null },
+            onDismiss = { selectedId = null },
+            onSave = { text -> vm.updateTranscript(entry, text); selectedId = null },
+            onDelete = { vm.delete(entry); selectedId = null },
         )
     }
 }
@@ -358,6 +614,11 @@ private fun EntryCard(entry: JournalEntry, isPlaying: Boolean, onPlay: () -> Uni
     }
 }
 
+/**
+ * Edit, save or delete one entry. Both destructive exits ask first: Delete
+ * confirms, and dismissing with unsaved changes (back, outside tap, Cancel)
+ * offers to discard. The draft and both prompts survive rotation.
+ */
 @Composable
 private fun EntryDialog(
     entry: JournalEntry,
@@ -365,29 +626,62 @@ private fun EntryDialog(
     onSave: (String) -> Unit,
     onDelete: () -> Unit,
 ) {
-    var text by remember { mutableStateOf(entry.transcript) }
+    var text by rememberSaveable(entry.id) { mutableStateOf(entry.transcript) }
+    var confirmDelete by rememberSaveable(entry.id) { mutableStateOf(false) }
+    var confirmDiscard by rememberSaveable(entry.id) { mutableStateOf(false) }
+    val dirty = text != entry.transcript
+    val requestClose = { if (dirty) confirmDiscard = true else onDismiss() }
+
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = requestClose,
         title = { Text(formatDate(entry.timestampMs)) },
         text = {
             Column {
                 OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Editing re-queues this entry for embedding once semantic search is active.",
+                    "Saving updates this entry's search index too.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(text) }) { Text("Save") } },
+        confirmButton = { TextButton(onClick = { onSave(text) }, enabled = dirty) { Text("Save") } },
         dismissButton = {
             Row {
-                TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(onClick = { confirmDelete = true }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = requestClose) { Text("Cancel") }
             }
         }
     )
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this entry?") },
+            text = { Text("The transcript and its recording are removed from this device. This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; onDelete() }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Keep") } },
+        )
+    }
+
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("Discard your changes?") },
+            text = { Text("Your edits to this transcript have not been saved.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDiscard = false; onDismiss() }) { Text("Discard") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") } },
+        )
+    }
 }
 
 private fun formatMs(ms: Long): String {

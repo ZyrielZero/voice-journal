@@ -9,9 +9,11 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import dev.zyriel.voicejournal.R
@@ -85,8 +87,25 @@ private val LightColors: ColorScheme = lightColorScheme(
     onError = Color(0xFFFFF3EC),
 )
 
-/* Literata carries titles and transcripts; sans stays on controls. */
-val Literata = FontFamily(Font(R.font.literata))
+/*
+ * Literata carries titles and transcripts; sans stays on controls.
+ * literata.ttf is a variable font (wght 200-900). A single Font entry at
+ * Normal made Compose fake-bold SemiBold and render Medium as Regular, so
+ * each weight the typography uses gets its own entry pinned to the real
+ * wght axis value. Add an entry here before using a new weight.
+ */
+@OptIn(ExperimentalTextApi::class)
+private fun literataAt(weight: FontWeight) = Font(
+    R.font.literata,
+    weight = weight,
+    variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)),
+)
+
+val Literata = FontFamily(
+    literataAt(FontWeight.Normal),
+    literataAt(FontWeight.Medium),
+    literataAt(FontWeight.SemiBold),
+)
 
 private val ReadingTypography = Typography(
     headlineMedium = TextStyle(

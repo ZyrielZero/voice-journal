@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher foreground: an ember-brass microphone over a soft glow, with two
+     sparks. Colors are EmberBrass and EmberPulseHigh from ui/theme/Theme.kt.
+     Everything sits inside the 66dp adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M54,22a30,30 0 1,1 0,60a30,30 0 1,1 0,-60z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54" android:centerY="48"
+                android:gradientRadius="30"
+                android:startColor="#55E8B36A"
+                android:endColor="#00E8B36A" />
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FFD99A4E"
+        android:pathData="M54,28a9,9 0 0,1 9,9v12a9,9 0 0,1 -18,0v-12a9,9 0 0,1 9,-9z" />
+    <path
+        android:strokeColor="#FFD99A4E"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M38,48a16,16 0 0,0 32,0M54,64v10M46,76h16" />
+    <path
+        android:fillColor="#FFE8B36A"
+        android:pathData="M70,30a2.5,2.5 0 1,0 5,0a2.5,2.5 0 1,0 -5,0zM76.4,38a1.6,1.6 0 1,0 3.2,0a1.6,1.6 0 1,0 -3.2,0z" />
+</vector>

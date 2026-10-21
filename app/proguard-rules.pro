@@ -29,10 +29,14 @@
 -keep class dev.zyriel.voicejournal.data.JournalEntry { *; }
 -keep class dev.zyriel.voicejournal.data.Converters { *; }
 
-# Strip Android log calls from release; the JNI-side __android_log_print
-# is unaffected (native code, not touched by R8).
+# Strip Android log calls from release, warnings and errors included:
+# their messages carry recording filenames, which encode the date and time
+# of each entry. The JNI-side __android_log_print is unaffected (native
+# code, not touched by R8); WP1 silences whisper's own log separately.
 -assumenosideeffects class android.util.Log {
     public static int v(...);
     public static int d(...);
     public static int i(...);
+    public static int w(...);
+    public static int e(...);
 }

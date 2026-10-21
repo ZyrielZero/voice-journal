@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- LightColors.background in ui/theme/Theme.kt -->
+    <color name="window_background">#FFF1E7D2</color>
+</resources>

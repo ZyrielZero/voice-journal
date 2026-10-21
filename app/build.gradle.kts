@@ -98,6 +98,12 @@ android {
     // source of truth; nothing is hand-duplicated into assets.
 }
 
+// wp4: the 33 MB embedding model is read on every cold start; storing it
+// uncompressed skips inflating it each time, the same as the whisper .bin.
+android {
+    androidResources { noCompress += "onnx" }
+}
+
 abstract class CopyLicenseAssets : DefaultTask() {
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
@@ -144,6 +150,16 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
+
+    // wp4: app lock (BiometricPrompt needs a FragmentActivity; fragment is
+    // pinned because biometric 1.1.0 would otherwise pull 1.2.5) and
+    // lifecycle-aware state collection in Compose.
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
+    // wp4: AppCompat window theme; biometric's Android 8.x fingerprint
+    // dialog is an AppCompat AlertDialog.
+    implementation("androidx.appcompat:appcompat:1.7.1")
 
     testImplementation("junit:junit:4.13.2")
     // org.json is an Android framework class at runtime; JVM unit tests
