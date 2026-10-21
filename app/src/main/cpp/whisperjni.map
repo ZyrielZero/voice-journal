@@ -1,0 +1,8 @@
+/* Export only the JNI entry points; whisper, ggml and libc++ stay local. */
+{
+  global:
+    Java_*;
+    JNI_OnLoad;
+  local:
+    *;
+};
