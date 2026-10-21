@@ -40,23 +40,79 @@ object WordErrorRate {
     }
 
     /**
-     * Normalizes text to a comparable token list: lowercased, punctuation
-     * dropped, whitespace collapsed. An apostrophe inside a token is kept so
+     * British spellings mapped to the American forms LibriSpeech references
+     * use. Deliberately small: the common -our, -re, -ise and doubled-l
+     * words, not a dictionary. Whisper writes "grey" for GRAY and "colour"
+     * for COLOR depending on context, and counting those as substitutions
+     * measures spelling convention, not hearing. Whisper's own
+     * EnglishTextNormalizer does the same with a much larger list.
+     */
+    internal val BRITISH_TO_AMERICAN: Map<String, String> = mapOf(
+        "grey" to "gray", "greys" to "grays", "greyish" to "grayish",
+        "colour" to "color", "colours" to "colors", "coloured" to "colored",
+        "colourist" to "colorist", "colourless" to "colorless",
+        "favour" to "favor", "favours" to "favors", "favourite" to "favorite",
+        "favourable" to "favorable", "honour" to "honor", "honours" to "honors",
+        "honoured" to "honored", "labour" to "labor", "neighbour" to "neighbor",
+        "neighbours" to "neighbors", "behaviour" to "behavior", "humour" to "humor",
+        "harbour" to "harbor", "armour" to "armor", "vapour" to "vapor",
+        "rumour" to "rumor", "savour" to "savor", "splendour" to "splendor",
+        "endeavour" to "endeavor", "parlour" to "parlor", "valour" to "valor",
+        "vigour" to "vigor", "odour" to "odor", "clamour" to "clamor",
+        "centre" to "center", "theatre" to "theater", "metre" to "meter",
+        "sombre" to "somber", "spectre" to "specter", "fibre" to "fiber",
+        "realise" to "realize", "realised" to "realized", "recognise" to "recognize",
+        "recognised" to "recognized", "organise" to "organize", "apologise" to "apologize",
+        "travelled" to "traveled", "travelling" to "traveling", "traveller" to "traveler",
+        "cancelled" to "canceled", "jewellery" to "jewelry", "defence" to "defense",
+        "offence" to "offense", "plough" to "plow", "programme" to "program",
+        "catalogue" to "catalog", "cheque" to "check", "grey's" to "gray's",
+    )
+
+    /**
+     * Normalizes text to a comparable token list: lowercased, typographic
+     * apostrophes (U+2019, U+2018, U+02BC) folded to ASCII, punctuation
+     * dropped, whitespace collapsed, and British spellings mapped through
+     * [BRITISH_TO_AMERICAN]. An apostrophe inside a token is kept so
      * contractions stay whole ("don't" is one token); leading and trailing
-     * ones are stripped so a quoted 'word' still matches word.
+     * ones are stripped so a quoted 'word' still matches word. Without the
+     * apostrophe fold, whisper's "don\u2019t" would split into two tokens
+     * and score as two errors against DON'T.
      *
-     * Deliberately does NOT normalize number words: whisper may emit "20"
-     * where the reference reads "twenty", and reconciling those is a
-     * separate problem with its own failure modes. Keep digits out of the
-     * reference script and this stays a clean measure of acoustic accuracy
-     * rather than formatting noise.
+     * This is a plain normalizer, stricter than Whisper's
+     * EnglishTextNormalizer: it does NOT normalize number words (whisper may
+     * emit "20" where the reference reads "twenty"), hyphenation or
+     * abbreviations. Keep digits out of the reference script and this stays
+     * a clean measure of acoustic accuracy rather than formatting noise.
      */
     fun normalize(text: String): List<String> =
         text.lowercase()
+            .replace('\u2019', '\'')
+            .replace('\u2018', '\'')
+            .replace('\u02BC', '\'')
             .replace(Regex("[^\\p{L}\\p{Nd}']+"), " ")
             .split(' ')
             .map { it.trim('\'') }
             .filter { it.isNotEmpty() }
+            .map { BRITISH_TO_AMERICAN[it] ?: it }
+
+    /**
+     * 95% Wilson score interval for [errors] out of [words], returned as
+     * (low, high) rates. WER is not strictly a binomial proportion (word
+     * errors cluster within an utterance, and insertions are not bounded by
+     * the reference length), so this understates the true uncertainty; it is
+     * printed next to the WER so a small corpus is never read as precise.
+     */
+    fun wilsonInterval95(errors: Int, words: Int): Pair<Double, Double> {
+        require(words > 0) { "no reference words" }
+        val z = 1.959964
+        val n = words.toDouble()
+        val p = (errors.toDouble() / n).coerceAtMost(1.0)
+        val denom = 1 + z * z / n
+        val centre = (p + z * z / (2 * n)) / denom
+        val half = z * kotlin.math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+        return (centre - half).coerceAtLeast(0.0) to (centre + half).coerceAtMost(1.0)
+    }
 
     /** Convenience: normalize both sides, then [alignTokens]. */
     fun align(reference: String, hypothesis: String): Alignment =

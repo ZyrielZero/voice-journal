@@ -92,4 +92,44 @@ class WordErrorRateTest {
         assertEquals(6, a.referenceWords)
         assertEquals(0.5, a.wer, 1e-9)
     }
+
+    @Test
+    fun typographicApostropheMatchesAscii() {
+        // Whisper often emits U+2019; without folding, "don\u2019t" became
+        // two tokens and scored as two errors against DON'T.
+        assertEquals(listOf("don't", "stop"), WordErrorRate.normalize("Don\u2019t stop"))
+        assertEquals(listOf("time's"), WordErrorRate.normalize("\u2018time\u2019s\u2019"))
+        val a = WordErrorRate.align("I DON'T KNOW TIME'S UP", "I don\u2019t know, time\u2019s up.")
+        assertEquals(0, a.errors)
+    }
+
+    @Test
+    fun britishSpellingsScoreAsAmerican() {
+        val a = WordErrorRate.align(
+            "OUT OF GRAY PAPER THEIR FAVORITE COLOR",
+            "out of grey paper, their favourite colour",
+        )
+        assertEquals(0, a.errors)
+        // The map is applied to the reference too, so either side may be British.
+        assertEquals(listOf("center", "theater"), WordErrorRate.normalize("Centre theatre"))
+    }
+
+    @Test
+    fun spellingMapDoesNotHideRealSubstitutions() {
+        // COLORIST vs "colorless" is a genuine mishearing and must still count.
+        val a = WordErrorRate.align("A GREAT COLORIST", "a great colourless")
+        assertEquals(1, a.substitutions)
+    }
+
+    @Test
+    fun wilsonIntervalMatchesReviewFigures() {
+        // 10 errors in 222 words, as in the committed ce5f560 VAD-on row:
+        // roughly 2.5% to 8.1%.
+        val (lo, hi) = WordErrorRate.wilsonInterval95(10, 222)
+        assertEquals(0.0247, lo, 0.001)
+        assertEquals(0.0810, hi, 0.001)
+        val (zlo, zhi) = WordErrorRate.wilsonInterval95(0, 50)
+        assertEquals(0.0, zlo, 0.0)
+        assertTrue(zhi > 0.0 && zhi < 0.1)
+    }
 }
