@@ -7,9 +7,9 @@ import androidx.lifecycle.viewModelScope
 import dev.zyriel.voicejournal.BuildConfig
 import dev.zyriel.voicejournal.audio.AudioPlayer
 import dev.zyriel.voicejournal.data.JournalArchive
-import dev.zyriel.voicejournal.data.ImportStatus
 import dev.zyriel.voicejournal.data.JournalDb
 import dev.zyriel.voicejournal.data.JournalEntry
+import dev.zyriel.voicejournal.data.openOutputStreamTruncating
 import dev.zyriel.voicejournal.pipeline.RecordingController
 import dev.zyriel.voicejournal.search.KeywordSearch
 import dev.zyriel.voicejournal.search.VectorSearch
@@ -119,14 +119,6 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
     private val _exportStatus = MutableStateFlow<TransferStatus?>(null)
 
     /**
-     * The store's last import status that the user closed. Compared by
-     * identity, not equality: the store publishes a new instance per run,
-     * so a later import with the same message still shows. Process-wide,
-     * like the store, so a closed result stays closed in a new ViewModel.
-     */
-    private val dismissedImport get() = Companion.dismissedImport
-
-    /**
      * One dialog for both directions. Export is screen-scoped and owned
      * here; import lives in the store and outlives this ViewModel, so a
      * reopened screen picks up an import still in flight. Export wins when
@@ -134,8 +126,8 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
      * other's result is still unread.
      */
     val transferStatus: StateFlow<TransferStatus?> =
-        combine(_exportStatus, store.importStatus, dismissedImport) { export, import, dismissed ->
-            export ?: import?.takeIf { it !== dismissed }?.let { TransferStatus(it.message, it.inFlight) }
+        combine(_exportStatus, store.importStatus) { export, import ->
+            export ?: import?.let { TransferStatus(it.message, it.inFlight) }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     fun dismissTransferStatus() {
@@ -143,41 +135,28 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
             if (_exportStatus.value?.inFlight == false) _exportStatus.value = null
             return
         }
-        val current = store.importStatus.value
-        if (current != null && !current.inFlight) dismissedImport.value = current
+        store.dismissImportStatus()
     }
 
     private fun done(message: String) {
         _exportStatus.value = TransferStatus(message, inFlight = false)
     }
 
-    init {
-        // An import inserts rows with no vectors. The store owns backfill;
-        // this nudge on completion is idempotent (backfill is single-flight)
-        // and only covers the case where the screen is still open.
-        viewModelScope.launch {
-            var wasInFlight = false
-            store.importStatus.collect { s ->
-                val inFlight = s?.inFlight == true
-                if (wasInFlight && !inFlight) store.requestBackfill()
-                wasInFlight = inFlight
-            }
-        }
-    }
-
     /**
      * Writes the whole journal to [uri] (from ACTION_CREATE_DOCUMENT).
      * Runs on viewModelScope: transfers are user-initiated with the screen
      * open, and unlike recording there is no OS resource to keep legal.
-     * Known limitation: backgrounding mid-export abandons a partial zip at
-     * the destination; SAF gives no atomic write to fix that from here.
+     * The destination is opened in truncating mode so overwriting a larger
+     * file cannot leave its tail behind. Known limitation: backgrounding
+     * mid-export abandons a partial zip at the destination; SAF gives no
+     * atomic write to fix that from here.
      */
     fun exportTo(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             _exportStatus.value = TransferStatus("Exporting...", inFlight = true)
             try {
                 val all = dao.allOnce().sortedByDescending { it.timestampMs }
-                getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
+                getApplication<Application>().contentResolver.openOutputStreamTruncating(uri)?.use { out ->
                     JournalArchive.export(
                         entries = all,
                         resolveAudio = { File(it.audioPath).takeIf { f -> f.isFile } },
@@ -199,14 +178,11 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
      * runs it single-flight on the controller scope (staging, two-phase
      * insert and duplicate rules live in JournalImporter) and reports
      * through [transferStatus]; a second request while one runs gets a
-     * busy message instead of a parallel import.
+     * busy message instead of a parallel import. The store also requests
+     * the embedding backfill for the new rows.
      */
     fun importFrom(uri: Uri) {
         store.import(uri)
-    }
-
-    private companion object {
-        val dismissedImport = MutableStateFlow<ImportStatus?>(null)
     }
 
     override fun onCleared() {
