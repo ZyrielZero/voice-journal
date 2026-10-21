@@ -1,17 +1,26 @@
 package dev.zyriel.voicejournal
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.os.SystemClock
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.animateColor
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,13 +57,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.zyriel.voicejournal.data.JournalEntry
@@ -73,27 +86,227 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class MainActivity : ComponentActivity() {
+/**
+ * Privacy settings, stored beside the theme in the same "settings" prefs.
+ * Both default on: transcripts are private by default, and the user opts
+ * out rather than in.
+ */
+object PrivacyPrefs {
+    private const val PREFS = "settings"
+    private const val KEY_HIDE = "hide_in_recents"
+    private const val KEY_LOCK = "app_lock"
+    private fun prefs(c: Context) = c.getSharedPreferences(PREFS, 0)
+    fun hideInRecents(c: Context) = prefs(c).getBoolean(KEY_HIDE, true)
+    fun setHideInRecents(c: Context, on: Boolean) = prefs(c).edit().putBoolean(KEY_HIDE, on).apply()
+    fun lockEnabled(c: Context) = prefs(c).getBoolean(KEY_LOCK, true)
+    fun setLockEnabled(c: Context, on: Boolean) = prefs(c).edit().putBoolean(KEY_LOCK, on).apply()
+}
+
+/**
+ * Process-wide lock state. A new process starts locked, so a cold start
+ * always asks; rotation and other Activity recreations keep the unlock.
+ */
+private object LockState {
+    @Volatile var unlocked = false
+    /** elapsedRealtime when the app left the screen, 0 while visible. */
+    @Volatile var backgroundedAt = 0L
+    /** True while a prompt is up, so a recreated Activity does not stack a second one. */
+    @Volatile var prompting = false
+}
+
+class MainActivity : FragmentActivity() {
+
+    private var locked by mutableStateOf(false)
+    private var lockMessage by mutableStateOf<String?>(null)
+    private var lockEnabled by mutableStateOf(true)
+    private var hideInRecents by mutableStateOf(true)
+    private lateinit var prompt: BiometricPrompt
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        hideInRecents = PrivacyPrefs.hideInRecents(this)
+        lockEnabled = PrivacyPrefs.lockEnabled(this)
+        applySecureFlag(hideInRecents)
+        // Created in onCreate, as BiometricPrompt requires, so a prompt
+        // that survives rotation reconnects to this Activity's callback.
+        prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this), lockCallback)
+        locked = shouldLock()
+
         setContent {
             var themeMode by remember { mutableStateOf(ThemePrefs.load(this)) }
+            // Keeps the journal's saved UI state (an open edit, its draft)
+            // while the lock screen replaces it, so relocking loses nothing.
+            val saveable = rememberSaveableStateHolder()
             VoiceJournalTheme(themeMode) {
-                JournalScreen(
-                    themeMode = themeMode,
-                    onCycleTheme = {
-                        themeMode = themeMode.next()
-                        ThemePrefs.save(this, themeMode)
-                    }
-                )
+                if (locked) {
+                    LockScreen(message = lockMessage, onUnlock = ::authenticate)
+                } else saveable.SaveableStateProvider("journal") {
+                    JournalScreen(
+                        themeMode = themeMode,
+                        onCycleTheme = {
+                            themeMode = themeMode.next()
+                            ThemePrefs.save(this, themeMode)
+                        },
+                        privacy = PrivacySettings(
+                            lockEnabled = lockEnabled,
+                            lockAvailable = canAuthenticate(),
+                            hideInRecents = hideInRecents,
+                            onToggleLock = ::toggleLock,
+                            onToggleHide = ::toggleHide,
+                        ),
+                    )
+                }
             }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val left = LockState.backgroundedAt
+        if (left != 0L && SystemClock.elapsedRealtime() - left >= RELOCK_AFTER_MS) {
+            LockState.unlocked = false
+        }
+        LockState.backgroundedAt = 0L
+        locked = shouldLock()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (locked && !LockState.prompting) authenticate()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations) LockState.backgroundedAt = SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * Locks only when the user wants it and the device can actually check
+     * them. With no screen lock enrolled (or no hardware) the gate is
+     * skipped entirely: the app must never lock its owner out of their
+     * own journal.
+     */
+    private fun shouldLock(): Boolean =
+        lockEnabled && !LockState.unlocked && canAuthenticate()
+
+    private fun canAuthenticate(): Boolean =
+        BiometricManager.from(this).canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
+
+    private fun authenticate() {
+        if (!shouldLock()) { unlock(); return }
+        lockMessage = null
+        LockState.prompting = true
+        prompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Unlock Voice Journal")
+                .setSubtitle("Your entries stay hidden until you confirm it's you.")
+                .setAllowedAuthenticators(AUTHENTICATORS)
+                .setConfirmationRequired(false)
+                .build()
+        )
+    }
+
+    private fun unlock() {
+        LockState.unlocked = true
+        locked = false
+        lockMessage = null
+    }
+
+    private val lockCallback = object : BiometricPrompt.AuthenticationCallback() {
+        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+            LockState.prompting = false
+            unlock()
+        }
+
+        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+            LockState.prompting = false
+            when {
+                // The screen lock was removed or the hardware went away
+                // since the check: fail open rather than strand the user.
+                !canAuthenticate() -> unlock()
+                // System cancel (the app left the screen): ask again on return.
+                errorCode == BiometricPrompt.ERROR_CANCELED -> Unit
+                errorCode == BiometricPrompt.ERROR_USER_CANCELED -> lockMessage = null
+                else -> lockMessage = errString.toString()
+            }
+        }
+        // onAuthenticationFailed is one rejected attempt; the prompt stays up.
+    }
+
+    private fun toggleLock() {
+        lockEnabled = !lockEnabled
+        PrivacyPrefs.setLockEnabled(this, lockEnabled)
+        // Turning it on from inside the app means the user is present.
+        if (lockEnabled) LockState.unlocked = true
+    }
+
+    private fun toggleHide() {
+        hideInRecents = !hideInRecents
+        PrivacyPrefs.setHideInRecents(this, hideInRecents)
+        applySecureFlag(hideInRecents)
+    }
+
+    /** Blanks recents thumbnails and blocks screenshots and screen shares. */
+    private fun applySecureFlag(on: Boolean) {
+        if (on) window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
+    private companion object {
+        /** Away this long and the journal locks again on return. */
+        const val RELOCK_AFTER_MS = 5 * 60 * 1000L
+
+        /**
+         * Strong biometrics or the device PIN, pattern or password. API 28
+         * and 29 reject BIOMETRIC_STRONG combined with DEVICE_CREDENTIAL,
+         * so those (and older) releases accept any enrolled biometric or
+         * the credential.
+         */
+        val AUTHENTICATORS =
+            if (Build.VERSION.SDK_INT >= 30) BIOMETRIC_STRONG or DEVICE_CREDENTIAL
+            else BIOMETRIC_WEAK or DEVICE_CREDENTIAL
+    }
+}
+
+/** The privacy toggles shown in the overflow menu. */
+data class PrivacySettings(
+    val lockEnabled: Boolean,
+    /** False when the device has no screen lock, so the lock cannot engage. */
+    val lockAvailable: Boolean,
+    val hideInRecents: Boolean,
+    val onToggleLock: () -> Unit,
+    val onToggleHide: () -> Unit,
+)
+
+@Composable
+private fun LockScreen(message: String?, onUnlock: () -> Unit) {
+    Box(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Voice Journal is locked", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                message ?: "Recording and transcription keep running while locked.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(24.dp))
+            Button(onClick = onUnlock) { Text("Unlock") }
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalViewModel = viewModel()) {
+fun JournalScreen(
+    themeMode: ThemeMode,
+    onCycleTheme: () -> Unit,
+    privacy: PrivacySettings,
+    vm: JournalViewModel = viewModel(),
+) {
     val entries by vm.entries.collectAsStateWithLifecycle()
     val allEntries by vm.allEntries.collectAsStateWithLifecycle()
     val pipeline by vm.pipeline.collectAsStateWithLifecycle()
@@ -226,6 +439,20 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                                     menuOpen = false
                                     importLauncher.launch(arrayOf("application/zip"))
                                 },
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(when {
+                                        !privacy.lockEnabled -> "App lock: off"
+                                        privacy.lockAvailable -> "App lock: on"
+                                        else -> "App lock: on (needs a screen lock)"
+                                    })
+                                },
+                                onClick = { menuOpen = false; privacy.onToggleLock() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (privacy.hideInRecents) "Hide in recents: on" else "Hide in recents: off") },
+                                onClick = { menuOpen = false; privacy.onToggleHide() },
                             )
                             DropdownMenuItem(
                                 text = { Text("About") },

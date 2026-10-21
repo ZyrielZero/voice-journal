@@ -157,6 +157,9 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
+    // wp4: AppCompat window theme; biometric's Android 8.x fingerprint
+    // dialog is an AppCompat AlertDialog.
+    implementation("androidx.appcompat:appcompat:1.7.1")
 
     testImplementation("junit:junit:4.13.2")
     // org.json is an Android framework class at runtime; JVM unit tests
