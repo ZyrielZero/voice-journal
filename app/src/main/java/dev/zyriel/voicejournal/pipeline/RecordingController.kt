@@ -65,6 +65,9 @@ class RecordingController private constructor(private val app: Context) {
 
     @Volatile private var activeFile: File? = null
 
+    // wp4 STUB for C3: WP2 owns the real construction.
+    val store = dev.zyriel.voicejournal.data.JournalStore(app, dao, scope) { engine }
+
     init {
         // Auto-stop at the transcription cap so no recording can outgrow
         // what the pipeline can hold in memory (Transcriber.MAX_CLIP_SECONDS).
