@@ -269,24 +269,34 @@ class RecordingController private constructor(private val app: Context) {
                 if (captureError != null && file.length() <= WavWriter.HEADER_SIZE) {
                     // Nothing was captured; there is nothing to salvage.
                     file.delete()
-                    _pipeline.value = PipelineState.Failed("Recording failed: $captureError")
+                    finish(PipelineState.Failed("Recording failed: $captureError"))
                     return@launch
                 }
                 insertTranscribed(file, System.currentTimeMillis())
-                _pipeline.value = PipelineState.Idle
+                finish(PipelineState.Idle)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _pipeline.value = PipelineState.Failed(e.message ?: "transcription failed")
+                finish(PipelineState.Failed(e.message ?: "transcription failed"))
             } finally {
-                activeFile = null
                 // An Error (OOM) is deliberately not caught above, but the
                 // pipeline must not be left showing Transcribing forever.
                 if (_pipeline.value is PipelineState.Transcribing) {
-                    _pipeline.value = PipelineState.Failed("transcription failed")
+                    finish(PipelineState.Failed("transcription failed"))
                 }
             }
         }
+    }
+
+    /**
+     * Publishes a terminal state, clearing [activeFile] first. The other
+     * order lets a Rec tap that sees Idle start a new recording and set
+     * [activeFile], which a late clear would then wipe, exposing the live
+     * file to the orphan sweep.
+     */
+    private fun finish(state: PipelineState) {
+        activeFile = null
+        _pipeline.value = state
     }
 
     /**
