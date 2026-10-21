@@ -12,6 +12,7 @@ import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.data.JournalStore
 import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import dev.zyriel.voicejournal.search.WordPieceTokenizer
+import dev.zyriel.voicejournal.whisper.ModelUnavailableException
 import dev.zyriel.voicejournal.whisper.Transcriber
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -81,6 +82,13 @@ class RecordingController private constructor(private val app: Context) {
      */
     private val _recovering = MutableStateFlow(false)
     val recovering: StateFlow<Boolean> = _recovering.asStateFlow()
+
+    /**
+     * Orphans moved to quarantine after repeated failed recoveries. Kept on
+     * disk, never deleted; read once after each launch sweep.
+     */
+    private val _quarantined = MutableStateFlow(0)
+    val quarantined: StateFlow<Int> = _quarantined.asStateFlow()
 
     /** Null until initialized; stays null if init fails, and search falls back to keywords. */
     @Volatile var engine: OnnxEmbeddingEngine? = null
@@ -166,13 +174,21 @@ class RecordingController private constructor(private val app: Context) {
                 beginRecovery()
                 // Recovered audio gets a real transcript; timestamp comes from
                 // the file itself so the entry lands where the user spoke it.
-                insertTranscribed(file, file.lastModified())
+                try {
+                    insertTranscribed(file, file.lastModified())
+                } catch (e: ModelUnavailableException) {
+                    // Every orphan would fail the same way; stop, and do not
+                    // let a broken model walk the user's audio into quarantine.
+                    throw OrphanSweep.Abort(e)
+                }
             }
         } finally {
             _recovering.value = false
         }
-        if (report.failed.isNotEmpty()) Log.w(TAG, report.oneLine())
+        if (report.failed.isNotEmpty() || report.aborted != null) Log.w(TAG, report.oneLine())
         else Log.i(TAG, report.oneLine())
+        for (q in report.quarantined) Log.i(TAG, "quarantined after repeated failures: ${q.name}")
+        _quarantined.value = OrphanSweep.quarantinedCount(dir)
     }
 
     private fun beginRecovery() {
@@ -256,11 +272,12 @@ class RecordingController private constructor(private val app: Context) {
     /**
      * Transcribes [file] and inserts its entry. A native transcription
      * failure (contract C1: null) throws instead of inserting, so the WAV
-     * stays unreferenced and the next launch's sweep retries it. Real
+     * stays unreferenced and the next launch's sweep retries it. A model
+     * that cannot load surfaces as [ModelUnavailableException]. Real
      * silence ("") is still saved, as "(no speech detected)".
      */
     private suspend fun insertTranscribed(file: File, timestampMs: Long) {
-        val text: String? = transcriber.transcribe(file)
+        val text: String? = transcriber.transcribeStrict(file)
         if (text == null) {
             throw IllegalStateException("Transcription failed. The audio is kept and will be retried on next launch.")
         }

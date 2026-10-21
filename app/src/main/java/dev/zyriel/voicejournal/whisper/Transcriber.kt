@@ -12,6 +12,13 @@ import java.io.File
 import java.io.IOException
 
 /**
+ * The whisper context could not be created (model missing, truncated, or
+ * rejected by whisper.cpp). Not the audio's fault: callers that count
+ * per-file failures must not count this one.
+ */
+class ModelUnavailableException(message: String) : IllegalStateException(message)
+
+/**
  * Owns the whisper context lifecycle. Models are copied from assets to the
  * files dir on first use (whisper.cpp needs a real file path). One context,
  * serialized transcriptions; whisper_full is not reentrant per context.
@@ -167,9 +174,24 @@ class Transcriber(private val context: Context) {
      * @throws IllegalArgumentException when the WAV is unreadable or longer
      *   than the [MAX_READ_SAMPLES] cap.
      */
-    suspend fun transcribe(wav: File, useVad: Boolean = vadEnabled): String? = mutex.withLock {
+    suspend fun transcribe(wav: File, useVad: Boolean = vadEnabled): String? =
+        try {
+            transcribeStrict(wav, useVad)
+        } catch (e: ModelUnavailableException) {
+            null
+        }
+
+    /**
+     * [transcribe], but a missing context is reported as
+     * [ModelUnavailableException] instead of folded into null, so a caller
+     * can tell "the model is broken" (retry later, blame nothing) from
+     * "this file failed" (null, or IllegalArgumentException).
+     */
+    suspend fun transcribeStrict(wav: File, useVad: Boolean = vadEnabled): String? = mutex.withLock {
         val ctx = ensureContextLocked()
-        if (ctx == 0L) return@withLock null
+        if (ctx == 0L) throw ModelUnavailableException(
+            "The transcription model could not be loaded. The audio is kept and will be retried on next launch."
+        )
         val samples = withContext(Dispatchers.IO) {
             try {
                 WavReader.readFloatPcm(wav, MAX_READ_SAMPLES)

@@ -42,6 +42,14 @@ object OrphanSweep {
     const val QUARANTINE_DIR = "quarantine"
     const val MAX_ATTEMPTS = 3
 
+    /**
+     * Thrown from onRecoverable when the failure is not the file's fault
+     * (the transcription model cannot be loaded): the sweep stops for this
+     * launch and the attempt is not counted, so a broken model can never
+     * quarantine the user's audio.
+     */
+    class Abort(cause: Throwable) : Exception(cause.message, cause)
+
     data class Report(
         val recovered: List<File>,
         val deleted: List<File>,
@@ -50,10 +58,13 @@ object OrphanSweep {
         val failed: List<Pair<File, Exception>> = emptyList(),
         /** Orphans moved to quarantine/ this sweep after [MAX_ATTEMPTS] failures. */
         val quarantined: List<File> = emptyList(),
+        /** Set when onRecoverable threw [Abort]; files after it were not visited. */
+        val aborted: Throwable? = null,
     ) {
         fun oneLine(): String =
             "sweep: ${recovered.size} recovered, ${deleted.size} deleted, " +
                 "${skipped.size} skipped, ${failed.size} FAILED, ${quarantined.size} quarantined" +
+                (if (aborted != null) ", ABORTED: ${aborted.message}" else "") +
                 if (failed.isEmpty()) "" else failed.joinToString(prefix = " [", postfix = "]") {
                     "${it.first.name}: ${it.second.message}"
                 }
@@ -80,7 +91,9 @@ object OrphanSweep {
      *   repair, fails THAT file: recorded in [Report.failed], counted toward
      *   quarantine, and the loop continues. The caller must surface
      *   [Report.failed]; a failed recovery must not look like a completed
-     *   sweep. Errors (OutOfMemoryError) are deliberately not caught.
+     *   sweep. Throwing [Abort] instead ends the sweep without counting the
+     *   attempt ([Report.aborted]). Errors (OutOfMemoryError) are
+     *   deliberately not caught.
      */
     suspend fun sweep(
         dir: File,
@@ -94,6 +107,7 @@ object OrphanSweep {
         val skipped = mutableListOf<File>()
         val failed = mutableListOf<Pair<File, Exception>>()
         val quarantined = mutableListOf<File>()
+        var aborted: Throwable? = null
 
         val listing = dir.listFiles()?.filter { it.isFile }?.sortedBy { it.name }
             ?: return Report(recovered, deleted, skipped)
@@ -161,14 +175,23 @@ object OrphanSweep {
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: Abort) {
+                // Not this file's failure: undo its count and stop.
+                if (attempts > 0) unrecordFailure(f, attempts)
+                aborted = e.cause ?: e
+                break
             } catch (e: Exception) {
                 failed += f to e
                 if (attempts < 0) attempts = recordFailure(f) // the repair itself threw
                 if (attempts >= MAX_ATTEMPTS && quarantine(dir, f)) quarantined += f
             }
         }
-        return Report(recovered, deleted, skipped, failed, quarantined)
+        return Report(recovered, deleted, skipped, failed, quarantined, aborted)
     }
+
+    /** WAVs currently held in `quarantine/` under [dir]. */
+    fun quarantinedCount(dir: File): Int =
+        File(dir, QUARANTINE_DIR).listFiles()?.count { it.isFile && it.extension == "wav" } ?: 0
 
     private fun canonical(f: File): String =
         try { f.canonicalPath } catch (e: IOException) { f.absolutePath }
@@ -183,6 +206,12 @@ object OrphanSweep {
         val n = failureCount(wav) + 1
         runCatching { sidecar(wav, FAILURE_SIDECAR).writeText(n.toString()) }
         return n
+    }
+
+    /** Rolls the count back from [counted] to the value before this attempt. */
+    private fun unrecordFailure(wav: File, counted: Int) {
+        val side = sidecar(wav, FAILURE_SIDECAR)
+        if (counted <= 1) side.delete() else runCatching { side.writeText((counted - 1).toString()) }
     }
 
     private fun quarantine(dir: File, wav: File): Boolean {

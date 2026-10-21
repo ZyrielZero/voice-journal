@@ -202,6 +202,33 @@ class OrphanSweepSidecarTest {
     }
 
     @Test
+    fun abortStopsTheSweepAndDoesNotCountTheAttempt() = runBlocking<Unit> {
+        val dir = tempDir()
+        val first = validWav(dir, "entry_a.wav")
+        val second = validWav(dir, "entry_b.wav")
+        val firstCounter = File(dir, first.name + OrphanSweep.FAILURE_SIDECAR).apply { writeText("2") }
+        val visited = mutableListOf<String>()
+
+        val r = OrphanSweep.sweep(dir, none) { f ->
+            visited += f.name
+            throw OrphanSweep.Abort(IllegalStateException("model gone"))
+        }
+
+        assertEquals(listOf("entry_a.wav"), visited)
+        assertEquals("model gone", r.aborted?.message)
+        assertTrue(r.failed.isEmpty() && r.quarantined.isEmpty())
+        assertEquals("count rolled back to its value before the attempt", "2", firstCounter.readText())
+        assertTrue(first.exists() && second.exists())
+        assertFalse(File(dir, second.name + OrphanSweep.FAILURE_SIDECAR).exists())
+
+        // Aborting on a fresh file leaves no sidecar at all.
+        firstCounter.delete()
+        OrphanSweep.sweep(dir, none) { throw OrphanSweep.Abort(IllegalStateException("still gone")) }
+        assertFalse(firstCounter.exists())
+        assertEquals(0, OrphanSweep.quarantinedCount(dir))
+    }
+
+    @Test
     fun strayFailureCounterIsDeleted() = runBlocking<Unit> {
         val dir = tempDir()
         val stray = File(dir, "gone.wav" + OrphanSweep.FAILURE_SIDECAR).apply { writeText("2") }
