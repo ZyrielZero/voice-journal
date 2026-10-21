@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon layer (Android 13+): the foreground's shapes in one color,
+     which the launcher tints. No glow, since a tint flattens gradients. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,28a9,9 0 0,1 9,9v12a9,9 0 0,1 -18,0v-12a9,9 0 0,1 9,-9z" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M38,48a16,16 0 0,0 32,0M54,64v10M46,76h16" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M70,30a2.5,2.5 0 1,0 5,0a2.5,2.5 0 1,0 -5,0zM76.4,38a1.6,1.6 0 1,0 3.2,0a1.6,1.6 0 1,0 -3.2,0z" />
+</vector>
