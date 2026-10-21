@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import java.io.File
 import java.io.RandomAccessFile
@@ -13,6 +14,12 @@ import java.nio.ByteOrder
 import java.nio.file.Files
 
 class OrphanSweepTest {
+
+    private val none: suspend (String) -> Boolean = { false }
+    private fun refs(vararg f: File): suspend (String) -> Boolean {
+        val set = f.map { it.absolutePath }.toSet()
+        return { it in set }
+    }
 
     private fun tempDir(): File = Files.createTempDirectory("sweep").toFile().apply { deleteOnExit() }
 
@@ -33,7 +40,7 @@ class OrphanSweepTest {
     }
 
     @Test
-    fun classifiesAllFourKindsInOnePass() {
+    fun classifiesAllFourKindsInOnePass() = runBlocking<Unit> {
         val dir = tempDir()
         val referenced = validWav(dir, "entry_referenced.wav")
         val active = crashedWav(dir, "entry_active.wav")          // mid-write right now
@@ -44,7 +51,7 @@ class OrphanSweepTest {
         val handed = mutableListOf<File>()
         val report = OrphanSweep.sweep(
             dir = dir,
-            referencedPaths = setOf(referenced.absolutePath),
+            isReferenced = refs(referenced),
             activePath = { active.absolutePath },
             onRecoverable = { handed += it },
         )
@@ -58,25 +65,25 @@ class OrphanSweepTest {
     }
 
     @Test
-    fun crashOrphanIsRepairedBeforeBeingHandedOver() {
+    fun crashOrphanIsRepairedBeforeBeingHandedOver() = runBlocking<Unit> {
         val dir = tempDir()
         crashedWav(dir, "entry_a.wav", samples = 400)
 
         var readable = -1
-        OrphanSweep.sweep(dir, emptySet()) { readable = WavReader.readFloatPcm(it).size }
+        OrphanSweep.sweep(dir, none) { readable = WavReader.readFloatPcm(it).size }
 
         assertEquals(400, readable)
     }
 
     @Test
-    fun referencedAndActiveFilesAreNeverModified() {
+    fun referencedAndActiveFilesAreNeverModified() = runBlocking<Unit> {
         val dir = tempDir()
         val referenced = crashedWav(dir, "entry_ref.wav")   // crashed-looking but DB-referenced: not ours to touch
         val active = crashedWav(dir, "entry_act.wav")
         val refBytes = referenced.readBytes()
         val actBytes = active.readBytes()
 
-        OrphanSweep.sweep(dir, setOf(referenced.absolutePath), { active.absolutePath }) {
+        OrphanSweep.sweep(dir, refs(referenced), { active.absolutePath }) {
             throw AssertionError("nothing should be recoverable here")
         }
 
@@ -85,26 +92,26 @@ class OrphanSweepTest {
     }
 
     @Test
-    fun nonWavFilesAreIgnored() {
+    fun nonWavFilesAreIgnored() = runBlocking<Unit> {
         val dir = tempDir()
         val stray = File(dir, "notes.txt").apply { writeText("not audio") }
 
-        val report = OrphanSweep.sweep(dir, emptySet()) { }
+        val report = OrphanSweep.sweep(dir, none) { }
 
         assertTrue(report.recovered.isEmpty() && report.deleted.isEmpty() && report.skipped.isEmpty())
         assertTrue(stray.exists())
     }
 
     @Test
-    fun missingDirectoryYieldsEmptyReport() {
-        val report = OrphanSweep.sweep(File("/nonexistent/nowhere"), emptySet()) {
+    fun missingDirectoryYieldsEmptyReport() = runBlocking<Unit> {
+        val report = OrphanSweep.sweep(File("/nonexistent/nowhere"), none) {
             throw AssertionError("must not be called")
         }
         assertTrue(report.recovered.isEmpty() && report.deleted.isEmpty() && report.skipped.isEmpty())
     }
 
     @Test
-    fun callbackFailureIsRecordedAndDoesNotAbortTheSweep() {
+    fun callbackFailureIsRecordedAndDoesNotAbortTheSweep() = runBlocking<Unit> {
         // The old contract propagated the first exception, which aborted the
         // loop: one bad orphan shadowed every orphan sorted after it, and the
         // caller's blanket runCatching then made the whole thing invisible.
@@ -114,7 +121,7 @@ class OrphanSweepTest {
         val good = validWav(dir, "entry_b_good.wav")
 
         val handled = mutableListOf<File>()
-        val report = OrphanSweep.sweep(dir, emptySet()) { f ->
+        val report = OrphanSweep.sweep(dir, none) { f ->
             if (f == bad) error("transcriber exploded")
             handled += f
         }
@@ -129,7 +136,7 @@ class OrphanSweepTest {
     }
 
     @Test
-    fun activePathIsReadPerFileNotSnapshotted() {
+    fun activePathIsReadPerFileNotSnapshotted() = runBlocking<Unit> {
         // A recording that becomes active mid-sweep must be skipped even
         // though it wasn't active when the sweep started.
         val dir = tempDir()
@@ -137,7 +144,7 @@ class OrphanSweepTest {
         val second = crashedWav(dir, "entry_2.wav")
 
         var activeNow: String? = null
-        val report = OrphanSweep.sweep(dir, emptySet(), { activeNow }) { f ->
+        val report = OrphanSweep.sweep(dir, none, { activeNow }) { f ->
             // Recovering the first file "takes time"; the user starts
             // recording into the second during it.
             if (f == first) activeNow = second.absolutePath
