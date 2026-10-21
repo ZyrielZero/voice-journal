@@ -66,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -97,9 +98,9 @@ object PrivacyPrefs {
     private const val KEY_LOCK = "app_lock"
     private fun prefs(c: Context) = c.getSharedPreferences(PREFS, 0)
     fun hideInRecents(c: Context) = prefs(c).getBoolean(KEY_HIDE, true)
-    fun setHideInRecents(c: Context, on: Boolean) = prefs(c).edit().putBoolean(KEY_HIDE, on).apply()
+    fun setHideInRecents(c: Context, on: Boolean) = prefs(c).edit { putBoolean(KEY_HIDE, on) }
     fun lockEnabled(c: Context) = prefs(c).getBoolean(KEY_LOCK, true)
-    fun setLockEnabled(c: Context, on: Boolean) = prefs(c).edit().putBoolean(KEY_LOCK, on).apply()
+    fun setLockEnabled(c: Context, on: Boolean) = prefs(c).edit { putBoolean(KEY_LOCK, on) }
 }
 
 /**
