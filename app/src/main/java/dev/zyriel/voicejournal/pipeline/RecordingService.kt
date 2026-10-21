@@ -33,7 +33,10 @@ import kotlinx.coroutines.launch
  * lives in [RecordingController], and this service exists so the OS lets it
  * run with the screen off. Started by the controller from a foreground
  * context (the Rec tap, or the launch sweep right after the app opens),
- * which the while-in-use microphone type requires.
+ * which the while-in-use microphone type requires. A recovery-only start is
+ * made only when RECORD_AUDIO is granted and the process is foreground
+ * (RecordingController.beginRecovery); otherwise recovery runs without
+ * this service, so every startForegroundService reaches startForeground.
  *
  * Wakelock rationale: AudioRecord holds a CPU wakelock internally while
  * capturing, but transcription runs for a few seconds after capture stops,
@@ -74,10 +77,12 @@ class RecordingService : Service() {
         }
 
         createChannel()
-        // Reachable only from a visible app, but the mic permission can be
-        // revoked between the tap and here, and Android 12+ refuses a
-        // background start; either throws. The pipeline keeps running
-        // without the service, so give up on the service, not the work.
+        // Reachable only from a visible app with the mic granted (the
+        // controller checks both before a recovery-only start), but the
+        // permission can still be revoked in the gap, and Android 12+
+        // refuses a background start; either throws. The pipeline keeps
+        // running without the service, so give up on the service, not the
+        // work.
         try {
             ServiceCompat.startForeground(
                 this,

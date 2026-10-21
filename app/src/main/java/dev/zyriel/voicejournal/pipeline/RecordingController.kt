@@ -1,7 +1,10 @@
 package dev.zyriel.voicejournal.pipeline
 
+import android.Manifest
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import dev.zyriel.voicejournal.audio.AudioRecorder
@@ -157,9 +160,10 @@ class RecordingController private constructor(private val app: Context) {
      * are suppliers, asked per file, so a recording started or an import
      * inserted mid-sweep is skipped, not recovered a second time.
      *
-     * While an orphan is being transcribed, [recovering] is true and the
-     * foreground service is held, so a backgrounded app is not frozen or
-     * killed mid-recovery. A live recording's transcription still queues
+     * While an orphan is being transcribed, [recovering] is true and, when
+     * the app is in the foreground with the mic granted, the foreground
+     * service is held, so a backgrounded app is not frozen or killed
+     * mid-recovery. A live recording's transcription still queues
      * behind the orphan on the Transcriber mutex.
      */
     private suspend fun sweepOrphans() {
@@ -194,7 +198,23 @@ class RecordingController private constructor(private val app: Context) {
     private fun beginRecovery() {
         if (_recovering.value) return
         _recovering.value = true
-        startService()
+        // The service is a microphone-type FGS. Starting one for recovery is
+        // only legal (and only guaranteed to reach startForeground, which a
+        // startForegroundService must) while the mic is granted and the app
+        // is in the foreground. Otherwise recover without it: the work still
+        // runs, just unprotected from the freezer, and an interrupted file
+        // is retried by the next sweep.
+        if (canHostRecoveryService()) startService()
+        else Log.i(TAG, "recovering without the foreground service")
+    }
+
+    private fun canHostRecoveryService(): Boolean {
+        val mic = ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!mic) return false
+        val info = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(info)
+        return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
     /**
