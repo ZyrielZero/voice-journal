@@ -78,6 +78,14 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /**
+     * Every entry regardless of the query, null until Room's first emission.
+     * The edit dialog resolves its entry here so a search re-rank cannot
+     * close it mid-edit.
+     */
+    val allEntries: StateFlow<List<JournalEntry>?> =
+        dao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     fun setQuery(q: String) { _query.value = q }
 
     fun toggleRecording() {

@@ -41,10 +41,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.pipeline.RecordingController.PipelineState
@@ -62,6 +65,9 @@ import dev.zyriel.voicejournal.ui.theme.EmberPulseHigh
 import dev.zyriel.voicejournal.ui.theme.ThemeMode
 import dev.zyriel.voicejournal.ui.theme.ThemePrefs
 import dev.zyriel.voicejournal.ui.theme.VoiceJournalTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -88,12 +94,13 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalViewModel = viewModel()) {
-    val entries by vm.entries.collectAsState()
-    val pipeline by vm.pipeline.collectAsState()
-    val query by vm.query.collectAsState()
-    val playing by vm.player.playingFile.collectAsState()
-    val transferStatus by vm.transferStatus.collectAsState()
-    val elapsed by vm.recorder.elapsedMs.collectAsState()
+    val entries by vm.entries.collectAsStateWithLifecycle()
+    val allEntries by vm.allEntries.collectAsStateWithLifecycle()
+    val pipeline by vm.pipeline.collectAsStateWithLifecycle()
+    val query by vm.query.collectAsStateWithLifecycle()
+    val playing by vm.player.playingFile.collectAsStateWithLifecycle()
+    val transferStatus by vm.transferStatus.collectAsStateWithLifecycle()
+    val elapsed by vm.recorder.elapsedMs.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     // POST_NOTIFICATIONS is requested alongside the mic so the recording
@@ -109,8 +116,11 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
         else arrayOf(Manifest.permission.RECORD_AUDIO)
     }
 
-    var selected by remember { mutableStateOf<JournalEntry?>(null) }
-    var showAbout by remember { mutableStateOf(false) }
+    // By id, not by entry: JournalEntry is not Parcelable (it holds a
+    // FloatArray), and an id survives rotation and re-resolves against the
+    // current list, so an entry deleted meanwhile simply closes the dialog.
+    var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var showAbout by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -118,23 +128,30 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                 title = { Text("Voice Journal", style = MaterialTheme.typography.headlineMedium) },
                 actions = {
                     if (dev.zyriel.voicejournal.BuildConfig.DEBUG) {
+                        // Debug-only suites. They run on Default with the
+                        // application context (never the Activity) and post
+                        // progress back to Main, so a rotation mid-run leaks
+                        // nothing and no Compose state is written off-thread.
+                        // try/catch, not crash visibility: an uncaught
+                        // exception would kill the process, which reads as a
+                        // hang behind a progress dialog.
+                        val appCtx = LocalContext.current.applicationContext
+                        val benchScope = rememberCoroutineScope()
                         var benchStatus by remember { mutableStateOf<String?>(null) }
-                        val ctx = LocalContext.current
                         TextButton(onClick = {
                             if (benchStatus == null) {
                                 benchStatus = "starting"
-                                // try/catch, not crash visibility: an uncaught exception on a
-                                // plain Thread kills the process, which reads as a hang when
-                                // the failure happens behind a progress dialog.
-                                Thread {
-                                    benchStatus = try {
-                                        val f = dev.zyriel.voicejournal.bench.BenchmarkSuite(ctx)
-                                            .runAll { s -> benchStatus = s }
-                                        "Saved: ${f.name} (adb pull ${f.absolutePath})"
-                                    } catch (e: Exception) {
-                                        "FAILED: ${e.message}"
+                                benchScope.launch {
+                                    benchStatus = withContext(Dispatchers.Default) {
+                                        try {
+                                            val f = dev.zyriel.voicejournal.bench.BenchmarkSuite(appCtx)
+                                                .runAll { s -> benchScope.launch { benchStatus = s } }
+                                            "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                        } catch (e: Exception) {
+                                            "FAILED: ${e.message}"
+                                        }
                                     }
-                                }.start()
+                                }
                             }
                         }) { Text("Bench") }
                         benchStatus?.let {
@@ -152,15 +169,17 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                         TextButton(onClick = {
                             if (accStatus == null) {
                                 accStatus = "starting"
-                                Thread {
-                                    accStatus = try {
-                                        val f = dev.zyriel.voicejournal.bench.AccuracySuite(ctx)
-                                            .runAll { s -> accStatus = s }
-                                        "Saved: ${f.name} (adb pull ${f.absolutePath})"
-                                    } catch (e: Exception) {
-                                        "FAILED: ${e.message}"
+                                benchScope.launch {
+                                    accStatus = withContext(Dispatchers.Default) {
+                                        try {
+                                            val f = dev.zyriel.voicejournal.bench.AccuracySuite(appCtx)
+                                                .runAll { s -> benchScope.launch { accStatus = s } }
+                                            "Saved: ${f.name} (adb pull ${f.absolutePath})"
+                                        } catch (e: Exception) {
+                                            "FAILED: ${e.message}"
+                                        }
                                     }
-                                }.start()
+                                }
                             }
                         }) { Text("Acc") }
                         accStatus?.let {
@@ -283,12 +302,12 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize().padding(bottom = 8.dp)
                 ) {
-                    items(entries) { entry ->
+                    items(entries, key = { it.id }) { entry ->
                         EntryCard(
                             entry = entry,
                             isPlaying = playing == File(entry.audioPath),
                             onPlay = { vm.play(entry) },
-                            onOpen = { selected = entry },
+                            onOpen = { selectedId = entry.id },
                         )
                     }
                 }
@@ -309,12 +328,21 @@ fun JournalScreen(themeMode: ThemeMode, onCycleTheme: () -> Unit, vm: JournalVie
         )
     }
 
-    selected?.let { entry ->
+    selectedId?.let { id ->
+        // Resolved against the unfiltered list, so a search re-rank cannot
+        // close the dialog. Null means Room has not emitted yet (after
+        // process death); an entry missing from a loaded list was deleted.
+        val all = allEntries ?: return@let
+        val entry = all.firstOrNull { it.id == id }
+        if (entry == null) {
+            LaunchedEffect(id) { selectedId = null }
+            return@let
+        }
         EntryDialog(
             entry = entry,
-            onDismiss = { selected = null },
-            onSave = { text -> vm.updateTranscript(entry, text); selected = null },
-            onDelete = { vm.delete(entry); selected = null },
+            onDismiss = { selectedId = null },
+            onSave = { text -> vm.updateTranscript(entry, text); selectedId = null },
+            onDelete = { vm.delete(entry); selectedId = null },
         )
     }
 }
@@ -358,6 +386,11 @@ private fun EntryCard(entry: JournalEntry, isPlaying: Boolean, onPlay: () -> Uni
     }
 }
 
+/**
+ * Edit, save or delete one entry. Both destructive exits ask first: Delete
+ * confirms, and dismissing with unsaved changes (back, outside tap, Cancel)
+ * offers to discard. The draft and both prompts survive rotation.
+ */
 @Composable
 private fun EntryDialog(
     entry: JournalEntry,
@@ -365,29 +398,62 @@ private fun EntryDialog(
     onSave: (String) -> Unit,
     onDelete: () -> Unit,
 ) {
-    var text by remember { mutableStateOf(entry.transcript) }
+    var text by rememberSaveable(entry.id) { mutableStateOf(entry.transcript) }
+    var confirmDelete by rememberSaveable(entry.id) { mutableStateOf(false) }
+    var confirmDiscard by rememberSaveable(entry.id) { mutableStateOf(false) }
+    val dirty = text != entry.transcript
+    val requestClose = { if (dirty) confirmDiscard = true else onDismiss() }
+
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = requestClose,
         title = { Text(formatDate(entry.timestampMs)) },
         text = {
             Column {
                 OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Editing re-queues this entry for embedding once semantic search is active.",
+                    "Saving updates this entry's search index too.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(text) }) { Text("Save") } },
+        confirmButton = { TextButton(onClick = { onSave(text) }, enabled = dirty) { Text("Save") } },
         dismissButton = {
             Row {
-                TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(onClick = { confirmDelete = true }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = requestClose) { Text("Cancel") }
             }
         }
     )
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this entry?") },
+            text = { Text("The transcript and its recording are removed from this device. This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; onDelete() }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Keep") } },
+        )
+    }
+
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("Discard your changes?") },
+            text = { Text("Your edits to this transcript have not been saved.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDiscard = false; onDismiss() }) { Text("Discard") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") } },
+        )
+    }
 }
 
 private fun formatMs(ms: Long): String {
