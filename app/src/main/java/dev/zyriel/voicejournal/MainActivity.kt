@@ -113,6 +113,28 @@ private object LockState {
     @Volatile var backgroundedAt = 0L
     /** True while a prompt is up, so a recreated Activity does not stack a second one. */
     @Volatile var prompting = false
+    /**
+     * True while a system file picker the app launched (import or export)
+     * covers the journal. Leaving for it is not leaving the app, so it
+     * must not trip the relock timer, up to [PICKER_GRACE_MS] so a picker
+     * left open is not an unlock that never expires. elapsedRealtime at
+     * launch, 0 when none is open; cleared by the picker's result.
+     */
+    @Volatile var pickerOpenedAt = 0L
+
+    /** Launches an app-owned picker without the relock firing behind it. */
+    fun launchPicker(launch: () -> Unit) {
+        pickerOpenedAt = SystemClock.elapsedRealtime()
+        try {
+            launch()
+        } catch (e: android.content.ActivityNotFoundException) {
+            pickerOpenedAt = 0L
+            throw e
+        }
+    }
+
+    /** Longest a picker can hold off the relock. */
+    const val PICKER_GRACE_MS = 30 * 60 * 1000L
 }
 
 class MainActivity : FragmentActivity() {
@@ -122,9 +144,16 @@ class MainActivity : FragmentActivity() {
     private var lockEnabled by mutableStateOf(true)
     private var hideInRecents by mutableStateOf(true)
     private lateinit var prompt: BiometricPrompt
+    /**
+     * The user dismissed the prompt. Saved across rotation so the recreated
+     * Activity waits for the Unlock button instead of prompting again;
+     * reset when the app really leaves the screen.
+     */
+    private var userCancelled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        userCancelled = savedInstanceState?.getBoolean(KEY_USER_CANCELLED) ?: false
         hideInRecents = PrivacyPrefs.hideInRecents(this)
         lockEnabled = PrivacyPrefs.lockEnabled(this)
         applySecureFlag(hideInRecents)
@@ -140,7 +169,14 @@ class MainActivity : FragmentActivity() {
             val saveable = rememberSaveableStateHolder()
             VoiceJournalTheme(themeMode) {
                 if (locked) {
-                    LockScreen(message = lockMessage, onUnlock = ::authenticate)
+                    LockScreen(message = lockMessage, onUnlock = {
+                        // A prompt is already up (or reconnecting after
+                        // rotation); a second authenticate would stack.
+                        if (!LockState.prompting) {
+                            userCancelled = false
+                            authenticate()
+                        }
+                    })
                 } else saveable.SaveableStateProvider("journal") {
                     JournalScreen(
                         themeMode = themeMode,
@@ -163,8 +199,11 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        val now = SystemClock.elapsedRealtime()
         val left = LockState.backgroundedAt
-        if (left != 0L && SystemClock.elapsedRealtime() - left >= RELOCK_AFTER_MS) {
+        val picker = LockState.pickerOpenedAt
+        val inPicker = picker != 0L && now - picker < LockState.PICKER_GRACE_MS
+        if (left != 0L && !inPicker && now - left >= RELOCK_AFTER_MS) {
             LockState.unlocked = false
         }
         LockState.backgroundedAt = 0L
@@ -173,12 +212,21 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (locked && !LockState.prompting) authenticate()
+        if (locked && !LockState.prompting && !userCancelled) authenticate()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_USER_CANCELLED, userCancelled)
     }
 
     override fun onStop() {
         super.onStop()
-        if (!isChangingConfigurations) LockState.backgroundedAt = SystemClock.elapsedRealtime()
+        if (!isChangingConfigurations) {
+            LockState.backgroundedAt = SystemClock.elapsedRealtime()
+            // Coming back from elsewhere asks again, cancelled or not.
+            userCancelled = false
+        }
     }
 
     /**
@@ -227,7 +275,11 @@ class MainActivity : FragmentActivity() {
                 !canAuthenticate() -> unlock()
                 // System cancel (the app left the screen): ask again on return.
                 errorCode == BiometricPrompt.ERROR_CANCELED -> Unit
-                errorCode == BiometricPrompt.ERROR_USER_CANCELED -> lockMessage = null
+                errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
+                    errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON -> {
+                    userCancelled = true
+                    lockMessage = null
+                }
                 else -> lockMessage = errString.toString()
             }
         }
@@ -256,6 +308,8 @@ class MainActivity : FragmentActivity() {
     private companion object {
         /** Away this long and the journal locks again on return. */
         const val RELOCK_AFTER_MS = 5 * 60 * 1000L
+
+        const val KEY_USER_CANCELLED = "lock_user_cancelled"
 
         /**
          * Strong biometrics or the device PIN, pattern or password. API 28
@@ -419,10 +473,16 @@ fun JournalScreen(
                         var menuOpen by remember { mutableStateOf(false) }
                         val exportLauncher = rememberLauncherForActivityResult(
                             ActivityResultContracts.CreateDocument("application/zip")
-                        ) { uri -> uri?.let(vm::exportTo) }
+                        ) { uri ->
+                            LockState.pickerOpenedAt = 0L
+                            uri?.let(vm::exportTo)
+                        }
                         val importLauncher = rememberLauncherForActivityResult(
                             ActivityResultContracts.OpenDocument()
-                        ) { uri -> uri?.let(vm::importFrom) }
+                        ) { uri ->
+                            LockState.pickerOpenedAt = 0L
+                            uri?.let(vm::importFrom)
+                        }
 
                         TextButton(onClick = { menuOpen = true }) { Text("More") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -431,14 +491,14 @@ fun JournalScreen(
                                 onClick = {
                                     menuOpen = false
                                     val stamp = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-                                    exportLauncher.launch("voice-journal-$stamp.zip")
+                                    LockState.launchPicker { exportLauncher.launch("voice-journal-$stamp.zip") }
                                 },
                             )
                             DropdownMenuItem(
                                 text = { Text("Import journal") },
                                 onClick = {
                                     menuOpen = false
-                                    importLauncher.launch(arrayOf("application/zip"))
+                                    LockState.launchPicker { importLauncher.launch(arrayOf("application/zip")) }
                                 },
                             )
                             DropdownMenuItem(
