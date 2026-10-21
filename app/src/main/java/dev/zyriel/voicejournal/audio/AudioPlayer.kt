@@ -27,14 +27,19 @@ class AudioPlayer {
         // this app didn't write, and a corrupt one used to crash here via
         // an unhandled IOException from setDataSource/prepare. A file that
         // won't play is a no-op with a log line, not a crash.
+        //
+        // The player is assigned before setDataSource so a throw there is
+        // released by stop() instead of leaking a native player, and it
+        // prepares asynchronously so decoding never blocks the main thread;
+        // a prepare failure arrives through the error listener.
+        val mp = MediaPlayer()
+        player = mp
         try {
-            player = MediaPlayer().apply {
-                setDataSource(file.absolutePath)
-                setOnCompletionListener { this@AudioPlayer.stop() }
-                setOnErrorListener { _, _, _ -> this@AudioPlayer.stop(); true }
-                prepare()
-                start()
-            }
+            mp.setOnCompletionListener { if (player === mp) stop() }
+            mp.setOnErrorListener { _, _, _ -> if (player === mp) stop(); true }
+            mp.setOnPreparedListener { if (player === mp) mp.start() }
+            mp.setDataSource(file.absolutePath)
+            mp.prepareAsync()
             _playingFile.value = file
         } catch (e: Exception) {
             Log.w("AudioPlayer", "cannot play ${file.name}: ${e.message}")
