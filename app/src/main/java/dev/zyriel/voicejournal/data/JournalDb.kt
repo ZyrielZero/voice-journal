@@ -52,7 +52,13 @@ interface JournalDao {
     suspend fun countByAudioPath(path: String): Int
 }
 
-@Database(entities = [JournalEntry::class], version = 2, exportSchema = false)
+/**
+ * Schemas are exported to app/schemas/ and committed; every version bump
+ * needs its JSON there and a step in JournalDbMigrationTest (androidTest).
+ * 1.json was reconstructed from MIGRATION_1_2 (v1 = v2 minus embeddingModel)
+ * by running Room's exporter on that entity, since v1 predates export.
+ */
+@Database(entities = [JournalEntry::class], version = 2, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class JournalDb : RoomDatabase() {
     abstract fun dao(): JournalDao

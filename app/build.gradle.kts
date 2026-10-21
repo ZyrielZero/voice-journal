@@ -151,3 +151,18 @@ dependencies {
     testImplementation("org.json:json:20240303")
     testImplementation("com.microsoft.onnxruntime:onnxruntime:1.31.0")
 }
+
+// wp3: Room schema export and the androidTest migration test. Schemas are
+// committed under app/schemas/ and doubled as androidTest assets so
+// MigrationTestHelper can read every version's JSON on a device.
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+android {
+    defaultConfig { testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    sourceSets { getByName("androidTest").assets.srcDir("$projectDir/schemas") }
+}
+dependencies {
+    androidTestImplementation("androidx.room:room-testing:2.8.4")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("junit:junit:4.13.2")
+}
