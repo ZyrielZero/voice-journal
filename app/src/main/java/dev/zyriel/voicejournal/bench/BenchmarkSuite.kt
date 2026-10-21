@@ -8,6 +8,7 @@ import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import dev.zyriel.voicejournal.search.VectorSearch
 import dev.zyriel.voicejournal.search.WordPieceTokenizer
 import dev.zyriel.voicejournal.whisper.Transcriber
+import dev.zyriel.voicejournal.whisper.WhisperBridge
 import dev.zyriel.voicejournal.data.JournalEntry
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -39,7 +40,18 @@ class BenchmarkSuite(private val context: Context) {
         "cores" to Runtime.getRuntime().availableProcessors().toString(),
         "android" to "API ${Build.VERSION.SDK_INT}",
         "environment" to "device",
+        "whisper_lib" to whisperLibrary(),
     )
+
+    /**
+     * Which native whisper library loaded (dotprod or baseline build), so a
+     * committed JSON says which code path it measured. Read reflectively
+     * because WhisperBridge.loadedLibrary lands on a parallel branch (wp1);
+     * after the merge this can become a direct property read.
+     */
+    private fun whisperLibrary(): String = runCatching {
+        WhisperBridge::class.java.getMethod("getLoadedLibrary").invoke(WhisperBridge) as String
+    }.getOrDefault("unknown")
 
     fun runAll(onProgress: (String) -> Unit): File = runBlocking {
         val results = ArrayList<Bench.Result>()
