@@ -41,7 +41,17 @@ object JournalArchive {
      * journal (a WAV hour is ~115 MB) while still bounding a hostile file.
      */
     const val DEFAULT_MAX_AUDIO_MEMBER_BYTES = 512L * 1024 * 1024
+    /**
+     * Upper bound only: the importer clamps it to the free space on the
+     * staging volume, so in practice the limit is whichever is smaller.
+     */
     const val DEFAULT_MAX_TOTAL_AUDIO_BYTES = 8L * 1024 * 1024 * 1024
+    /** manifest.json is read whole into memory, so it gets its own ceiling. */
+    const val DEFAULT_MAX_MANIFEST_BYTES = 16L * 1024 * 1024
+    /** Zip members of any kind; a real export has one per entry plus one. */
+    const val DEFAULT_MAX_MEMBERS = 100_000
+    /** Manifest entries; bounds the CPU spent before the first DB write. */
+    const val DEFAULT_MAX_ENTRIES = 100_000
 
     /** One entry as read back from an archive. [audioPath] null when the archive had no audio for it. */
     data class ImportedEntry(
@@ -103,29 +113,45 @@ object JournalArchive {
      * the absolute path it wrote to, or null to drop that audio. Returns
      * the manifest's entries joined with the sink's paths.
      *
-     * @throws ArchiveFormatException on a missing manifest or an
-     *   unsupported format version. Entries referencing audio members that
-     *   are absent from the zip import transcript-only rather than failing
-     *   the whole archive.
+     * @throws ArchiveFormatException on a missing or duplicate manifest,
+     *   an unsupported format version, or any size or count ceiling
+     *   exceeded. Entries referencing audio members that are absent from
+     *   the zip import transcript-only rather than failing the whole
+     *   archive.
      */
     fun import(
         inp: InputStream,
         maxAudioMemberBytes: Long = DEFAULT_MAX_AUDIO_MEMBER_BYTES,
         maxTotalAudioBytes: Long = DEFAULT_MAX_TOTAL_AUDIO_BYTES,
+        maxManifestBytes: Long = DEFAULT_MAX_MANIFEST_BYTES,
+        maxMembers: Int = DEFAULT_MAX_MEMBERS,
+        maxEntries: Int = DEFAULT_MAX_ENTRIES,
         audioSink: (suggestedName: String, data: InputStream) -> String?,
     ): List<ImportedEntry> {
         var manifest: JSONObject? = null
         val writtenAudio = HashMap<String, String>() // zip member name -> absolute path
         var totalAudio = 0L
+        var members = 0
 
         ZipInputStream(inp.buffered()).use { zip ->
             var e: ZipEntry? = zip.nextEntry
             while (e != null) {
+                if (++members > maxMembers) {
+                    throw ArchiveFormatException("archive has more than $maxMembers members")
+                }
                 when {
                     e.name == MANIFEST -> {
-                        manifest = JSONObject(zip.readBytes().toString(Charsets.UTF_8))
+                        // A second manifest would silently replace the first
+                        // after its audio was already joined against it.
+                        if (manifest != null) throw ArchiveFormatException("archive has more than one $MANIFEST")
+                        rejectDeclaredOversize(e, maxManifestBytes)
+                        // Bounded on the real bytes: a 50 KB deflate bomb
+                        // declares nothing and inflates to gigabytes.
+                        val bounded = BoundedInputStream(zip, e.name, maxManifestBytes) { true }
+                        manifest = JSONObject(bounded.readBytes().toString(Charsets.UTF_8))
                     }
                     !e.isDirectory && e.name.startsWith(AUDIO_DIR) -> {
+                        rejectDeclaredOversize(e, maxAudioMemberBytes)
                         // Strip any path component from the member name so a
                         // crafted archive cannot write outside the sink's dir.
                         val safe = File(e.name).name
@@ -148,6 +174,9 @@ object JournalArchive {
         }
 
         val arr = m.optJSONArray("entries") ?: return emptyList()
+        if (arr.length() > maxEntries) {
+            throw ArchiveFormatException("archive lists ${arr.length()} entries (limit $maxEntries)")
+        }
         return (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i)
             ImportedEntry(
@@ -155,6 +184,17 @@ object JournalArchive {
                 timestampMs = o.getLong("timestampMs"),
                 audioPath = o.optString("audio", "").takeIf { it.isNotEmpty() }?.let { writtenAudio[it] },
             )
+        }
+    }
+
+    /**
+     * Fails fast on a member whose declared size is already over its
+     * ceiling. Declared sizes can lie low (or be absent, -1), so this is
+     * only a shortcut; [BoundedInputStream] is the real enforcement.
+     */
+    private fun rejectDeclaredOversize(e: ZipEntry, limit: Long) {
+        if (e.size > limit) {
+            throw ArchiveFormatException("archive member ${e.name} exceeds the import size limit")
         }
     }
 

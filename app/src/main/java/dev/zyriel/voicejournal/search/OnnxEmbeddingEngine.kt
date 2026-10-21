@@ -35,7 +35,13 @@ class OnnxEmbeddingEngine(
     }
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val session: OrtSession = env.createSession(modelBytes, OrtSession.SessionOptions())
+    // Intra-op threads pinned to 2..4: ORT's default sizes the pool to every
+    // core, which on big.LITTLE parts drags the little cores into each op.
+    // Options are only read at session creation, so they are closed at once.
+    private val session: OrtSession = OrtSession.SessionOptions().use { opts ->
+        opts.setIntraOpNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(2, 4))
+        env.createSession(modelBytes, opts)
+    }
     private val tokenizer = vocab
     private val mutex = Mutex()
 

@@ -1,5 +1,6 @@
 package dev.zyriel.voicejournal.data
 
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,6 +41,13 @@ class JournalImporterTest {
         }.toByteArray()
     }
 
+    // import is suspend now (no runBlocking inside the app); tests drive it here.
+    private fun JournalImporter.importBlocking(
+        archive: java.io.InputStream,
+        existingKeys: Set<Pair<Long, String>>,
+        insert: suspend (JournalArchive.ImportedEntry) -> Unit,
+    ): JournalImporter.Result = runBlocking { import(archive, existingKeys, insert = insert) }
+
     private fun wavsIn(dir: File) = dir.listFiles()?.filter { it.extension == "wav" } ?: emptyList()
 
     // The H1 sequence: a rejected archive must leave recordings/ exactly as
@@ -59,7 +67,7 @@ class JournalImporterTest {
         }.toByteArray()
 
         try {
-            imp.import(ByteArrayInputStream(zipBytes), emptySet()) { fail("nothing may insert") }
+            imp.importBlocking(ByteArrayInputStream(zipBytes), emptySet()) { fail("nothing may insert") }
             fail("expected ArchiveFormatException")
         } catch (e: JournalArchive.ArchiveFormatException) {
             // expected
@@ -78,7 +86,7 @@ class JournalImporterTest {
         )
 
         val inserted = mutableListOf<JournalArchive.ImportedEntry>()
-        val r = imp.import(ByteArrayInputStream(zip), emptySet()) { inserted += it }
+        val r = imp.importBlocking(ByteArrayInputStream(zip), emptySet()) { inserted += it }
 
         assertEquals(JournalImporter.Result(added = 2, total = 2), r)
         assertEquals(2, inserted.size)
@@ -100,7 +108,7 @@ class JournalImporterTest {
         )
 
         val inserted = mutableListOf<JournalArchive.ImportedEntry>()
-        val r = imp.import(
+        val r = imp.importBlocking(
             ByteArrayInputStream(zip),
             existingKeys = setOf(100L to "already here"),
         ) { inserted += it }
@@ -121,7 +129,7 @@ class JournalImporterTest {
 
         val inserted = mutableListOf<JournalArchive.ImportedEntry>()
         try {
-            imp.import(ByteArrayInputStream(zip), emptySet()) { e ->
+            imp.importBlocking(ByteArrayInputStream(zip), emptySet()) { e ->
                 if (e.transcript == "insert explodes") error("db said no")
                 inserted += e
             }
@@ -143,10 +151,10 @@ class JournalImporterTest {
         val imp = importer()
         val zip = archiveOf(Triple("same name twice", 100L, byteArrayOf(7)))
 
-        imp.import(ByteArrayInputStream(zip), emptySet()) { }
+        imp.importBlocking(ByteArrayInputStream(zip), emptySet()) { }
         // Second run: not a duplicate (caller passes keys; here none), so the
         // same archive member name must land under a fresh filename.
-        imp.import(ByteArrayInputStream(zip), emptySet()) { }
+        imp.importBlocking(ByteArrayInputStream(zip), emptySet()) { }
 
         val files = wavsIn(recordings)
         assertEquals(2, files.size)
@@ -160,7 +168,7 @@ class JournalImporterTest {
         File(staging, "leftover.wav").writeBytes(ByteArray(100))
 
         val zip = archiveOf(Triple("fresh", 100L, byteArrayOf(5)))
-        val r = imp.import(ByteArrayInputStream(zip), emptySet()) { }
+        val r = imp.importBlocking(ByteArrayInputStream(zip), emptySet()) { }
 
         assertEquals(1, r.added)
         assertEquals(1, wavsIn(recordings).size)
