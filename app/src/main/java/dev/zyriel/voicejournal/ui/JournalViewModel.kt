@@ -7,20 +7,24 @@ import androidx.lifecycle.viewModelScope
 import dev.zyriel.voicejournal.BuildConfig
 import dev.zyriel.voicejournal.audio.AudioPlayer
 import dev.zyriel.voicejournal.data.JournalArchive
+import dev.zyriel.voicejournal.data.ImportStatus
 import dev.zyriel.voicejournal.data.JournalDb
-import dev.zyriel.voicejournal.data.JournalImporter
 import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.pipeline.RecordingController
 import dev.zyriel.voicejournal.search.KeywordSearch
-import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import dev.zyriel.voicejournal.search.VectorSearch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -30,12 +34,17 @@ import java.io.File
  * UI-facing state for the journal screen. Deliberately owns nothing that must
  * outlive the Activity: the record/transcribe/insert pipeline lives in
  * [RecordingController], which survives configuration changes, backgrounding,
- * and Activity death. This ViewModel handles what only matters while the
- * screen exists: search, playback, and transcript edits.
+ * and Activity death. Writes that must survive the screen (delete, edit,
+ * import, backfill) go to the controller's [RecordingController.store],
+ * which runs them on the process-lived scope. This ViewModel handles what
+ * only matters while the screen exists: search, playback, export, and
+ * presenting the store's import status.
  */
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class JournalViewModel(app: Application) : AndroidViewModel(app) {
 
     private val controller = RecordingController.get(app)
+    private val store = controller.store
     private val dao = JournalDb.get(app).dao()
 
     val pipeline: StateFlow<RecordingController.PipelineState> = controller.pipeline
@@ -45,9 +54,17 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
 
-    /** Entries, filtered by semantic search when a query is active. */
+    /**
+     * Entries, filtered by semantic search when a query is active. Typing is
+     * debounced (clearing the box is not) because each embed holds the
+     * engine mutex around a blocking session.run, and the ranking runs on
+     * Default so a Room emission during a query never scores on Main.
+     */
     val entries: StateFlow<List<JournalEntry>> =
-        combine(dao.observeAll(), _query) { all, q -> all to q }
+        combine(
+            dao.observeAll(),
+            _query.debounce { if (it.isBlank()) 0L else 250L }.distinctUntilChanged(),
+        ) { all, q -> all to q }
             .mapLatest { (all, q) ->
                 when {
                     q.isBlank() -> all
@@ -58,6 +75,7 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
+            .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun setQuery(q: String) { _query.value = q }
@@ -72,23 +90,15 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
         if (player.playingFile.value == f) player.stop() else if (f.exists()) player.play(f)
     }
 
+    /** Saved on the controller scope, so leaving the screen cannot drop the edit. */
     fun updateTranscript(entry: JournalEntry, newText: String) {
-        viewModelScope.launch {
-            val vec = controller.engine?.embed(newText)
-            dao.update(entry.copy(
-                transcript = newText,
-                embedding = vec,
-                embeddingModel = if (vec != null) OnnxEmbeddingEngine.MODEL_TAG else null,
-            ))
-        }
+        store.updateTranscript(entry, newText)
     }
 
+    /** Stops playback of this entry first; the store removes the WAV, then the row. */
     fun delete(entry: JournalEntry) {
-        viewModelScope.launch {
-            player.stop()
-            dao.delete(entry)
-            File(entry.audioPath).delete()
-        }
+        if (player.playingFile.value == File(entry.audioPath)) player.stop()
+        store.delete(entry)
     }
 
     fun dismissError() { controller.dismissError() }
@@ -98,13 +108,53 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
     /** Transfer progress/result for the UI. [inFlight] gates dismissal. */
     data class TransferStatus(val message: String, val inFlight: Boolean)
 
-    private val _transferStatus = MutableStateFlow<TransferStatus?>(null)
-    val transferStatus: StateFlow<TransferStatus?> = _transferStatus.asStateFlow()
+    private val _exportStatus = MutableStateFlow<TransferStatus?>(null)
 
-    fun dismissTransferStatus() { _transferStatus.value = null }
+    /**
+     * The store's last import status that the user closed. Compared by
+     * identity, not equality: the store publishes a new instance per run,
+     * so a later import with the same message still shows. Process-wide,
+     * like the store, so a closed result stays closed in a new ViewModel.
+     */
+    private val dismissedImport get() = Companion.dismissedImport
+
+    /**
+     * One dialog for both directions. Export is screen-scoped and owned
+     * here; import lives in the store and outlives this ViewModel, so a
+     * reopened screen picks up an import still in flight. Export wins when
+     * both are set, which only happens if the user starts one while the
+     * other's result is still unread.
+     */
+    val transferStatus: StateFlow<TransferStatus?> =
+        combine(_exportStatus, store.importStatus, dismissedImport) { export, import, dismissed ->
+            export ?: import?.takeIf { it !== dismissed }?.let { TransferStatus(it.message, it.inFlight) }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun dismissTransferStatus() {
+        if (_exportStatus.value != null) {
+            if (_exportStatus.value?.inFlight == false) _exportStatus.value = null
+            return
+        }
+        val current = store.importStatus.value
+        if (current != null && !current.inFlight) dismissedImport.value = current
+    }
 
     private fun done(message: String) {
-        _transferStatus.value = TransferStatus(message, inFlight = false)
+        _exportStatus.value = TransferStatus(message, inFlight = false)
+    }
+
+    init {
+        // An import inserts rows with no vectors. The store owns backfill;
+        // this nudge on completion is idempotent (backfill is single-flight)
+        // and only covers the case where the screen is still open.
+        viewModelScope.launch {
+            var wasInFlight = false
+            store.importStatus.collect { s ->
+                val inFlight = s?.inFlight == true
+                if (wasInFlight && !inFlight) store.requestBackfill()
+                wasInFlight = inFlight
+            }
+        }
     }
 
     /**
@@ -116,7 +166,7 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun exportTo(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
-            _transferStatus.value = TransferStatus("Exporting...", inFlight = true)
+            _exportStatus.value = TransferStatus("Exporting...", inFlight = true)
             try {
                 val all = dao.allOnce().sortedByDescending { it.timestampMs }
                 getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
@@ -137,48 +187,18 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Imports an archive from [uri] (from ACTION_OPEN_DOCUMENT). The heavy
-     * lifting lives in [JournalImporter]: audio is staged under the cache
-     * dir and only moves into recordings/ per successful insert, so a
-     * rejected or interrupted archive can never leave WAVs for the orphan
-     * sweep to resurrect as phantom entries. Duplicate semantics — skip on
-     * an exact (timestamp, transcript) match — are documented on the
-     * importer. New entries insert with null embeddings and the
-     * controller's backfill vectorizes them, same as first-launch recovery.
+     * Imports an archive from [uri] (from ACTION_OPEN_DOCUMENT). The store
+     * runs it single-flight on the controller scope (staging, two-phase
+     * insert and duplicate rules live in JournalImporter) and reports
+     * through [transferStatus]; a second request while one runs gets a
+     * busy message instead of a parallel import.
      */
     fun importFrom(uri: Uri) {
-        viewModelScope.launch(Dispatchers.IO) {
-            _transferStatus.value = TransferStatus("Importing...", inFlight = true)
-            try {
-                val app = getApplication<Application>()
-                val importer = JournalImporter(
-                    stagingDir = File(app.cacheDir, "import-staging"),
-                    recordingsDir = File(app.filesDir, "recordings"),
-                )
-                val existing = dao.allOnce().map { it.timestampMs to it.transcript }.toHashSet()
-                val result = app.contentResolver.openInputStream(uri)?.use { inp ->
-                    importer.import(inp, existing) { e ->
-                        kotlinx.coroutines.runBlocking {
-                            dao.insert(JournalEntry(
-                                transcript = e.transcript,
-                                timestampMs = e.timestampMs,
-                                audioPath = e.audioPath ?: "",
-                            ))
-                        }
-                    }
-                } ?: error("could not open archive")
-                controller.requestBackfill()
-                done(when {
-                    result.total == 0 -> "Archive was empty."
-                    result.added == 0 -> "Nothing new: all ${result.total} entries already here."
-                    else -> "Imported ${result.added} of ${result.total} entries."
-                })
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                done("Import failed: ${e.message}")
-            }
-        }
+        store.import(uri)
+    }
+
+    private companion object {
+        val dismissedImport = MutableStateFlow<ImportStatus?>(null)
     }
 
     override fun onCleared() {
