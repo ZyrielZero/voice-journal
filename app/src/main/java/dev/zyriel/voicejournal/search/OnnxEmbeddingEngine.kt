@@ -28,7 +28,12 @@ class OnnxEmbeddingEngine(
 ) : EmbeddingEngine {
 
     companion object {
-        const val MODEL_TAG = "bge-small-en-v1.5-q8"
+        /**
+         * Stored with every vector; the backfill re-embeds rows whose tag
+         * differs. "+tok2" marks the WordPiece tokenizer fix: vectors from
+         * the old tokenizer are stale even though the model is the same.
+         */
+        const val MODEL_TAG = "bge-small-en-v1.5-q8+tok2"
         const val DIM = 384
         const val MAX_TOKENS = 256
         const val QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
