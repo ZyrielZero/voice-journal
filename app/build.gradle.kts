@@ -130,6 +130,16 @@ androidComponents {
     }
 }
 
+// wp5: unit tests resolve committed assets through an absolute module path
+// instead of the working directory (IDE runners start elsewhere), and the
+// wall-clock assertions in BenchTest are opt-in: -Pvj.perfAssertions=true.
+val wp5AppDir: String = projectDir.absolutePath
+val wp5PerfAssertions: String = providers.gradleProperty("vj.perfAssertions").getOrElse("false")
+tasks.withType<Test>().configureEach {
+    systemProperty("vj.appDir", wp5AppDir)
+    systemProperty("vj.perfAssertions", wp5PerfAssertions)
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
