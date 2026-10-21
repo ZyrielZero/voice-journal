@@ -16,7 +16,8 @@ import java.nio.ByteOrder
  * which is what this object does.
  *
  * Deliberately narrow: only touches files matching our writer's exact
- * canonical layout (44-byte header, PCM, mono, 16 kHz, 16-bit). Anything else
+ * canonical layout (44-byte header, PCM, mono, 16 kHz, 16-bit, byte rate
+ * 32000, block align 2). Anything else
  * is [Outcome.Unrecoverable] and is left byte-for-byte untouched, because a
  * file we didn't write is a file we have no business patching.
  *
@@ -59,6 +60,8 @@ object WavRepair {
         if (h.getShort(20).toInt() != 1 ||
             h.getShort(22).toInt() != WavWriter.CHANNELS ||
             h.getInt(24) != WavWriter.SAMPLE_RATE ||
+            h.getInt(28) != WavWriter.BYTE_RATE ||
+            h.getShort(32).toInt() != WavWriter.BLOCK_ALIGN ||
             h.getShort(34).toInt() != WavWriter.BITS_PER_SAMPLE
         ) {
             return Outcome.Unrecoverable("format fields are not ours")
@@ -78,8 +81,12 @@ object WavRepair {
             return Outcome.Unrecoverable("data exceeds WAV size limit; not a WavWriter file")
         }
 
-        val declaredData = h.getInt(40).toLong()
-        val declaredRiff = h.getInt(4).toLong()
+        // Read as unsigned. Streaming writers (ffmpeg to a pipe, some
+        // recorder apps) put 0xFFFFFFFF in both size fields because the
+        // length is unknown when the header goes out; that marker is never
+        // a real size here, so it is patched like a crash-zeroed header.
+        val declaredData = h.getInt(40).toLong() and 0xFFFFFFFFL
+        val declaredRiff = h.getInt(4).toLong() and 0xFFFFFFFFL
         if (!hasOddTail && declaredData == dataBytes && declaredRiff == 36 + dataBytes) {
             return Outcome.AlreadyConsistent
         }
