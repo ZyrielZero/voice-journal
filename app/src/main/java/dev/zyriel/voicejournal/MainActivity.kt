@@ -472,6 +472,7 @@ fun JournalScreen(
                     }
                     Box {
                         var menuOpen by remember { mutableStateOf(false) }
+                        var exportNotice by rememberSaveable { mutableStateOf(false) }
                         val exportLauncher = rememberLauncherForActivityResult(
                             ActivityResultContracts.CreateDocument("application/zip")
                         ) { uri ->
@@ -485,15 +486,35 @@ fun JournalScreen(
                             uri?.let(vm::importFrom)
                         }
 
+                        if (exportNotice) {
+                            AlertDialog(
+                                onDismissRequest = { exportNotice = false },
+                                title = { Text("Export journal") },
+                                text = {
+                                    Text(
+                                        "The export is an unencrypted zip file containing your " +
+                                            "audio recordings and transcripts. Anyone who gets the " +
+                                            "file can read and play them, so store it somewhere you trust."
+                                    )
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        exportNotice = false
+                                        val stamp = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+                                        LockState.launchPicker { exportLauncher.launch("voice-journal-$stamp.zip") }
+                                    }) { Text("Export") }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { exportNotice = false }) { Text("Cancel") }
+                                },
+                            )
+                        }
+
                         TextButton(onClick = { menuOpen = true }) { Text("More") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
                                 text = { Text("Export journal") },
-                                onClick = {
-                                    menuOpen = false
-                                    val stamp = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-                                    LockState.launchPicker { exportLauncher.launch("voice-journal-$stamp.zip") }
-                                },
+                                onClick = { menuOpen = false; exportNotice = true },
                             )
                             DropdownMenuItem(
                                 text = { Text("Import journal") },
