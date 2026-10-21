@@ -29,8 +29,27 @@ interface JournalDao {
     fun observeAll(): Flow<List<JournalEntry>>
     @Query("SELECT * FROM entries")
     suspend fun allOnce(): List<JournalEntry>
-    @Query("SELECT * FROM entries WHERE embedding IS NULL OR embeddingModel != :model")
+    // IS NOT, not !=: rows migrated from v1 carry embeddingModel NULL, and
+    // NULL != 'tag' is NULL (not true), so != skipped every one of them.
+    @Query("SELECT * FROM entries WHERE embedding IS NULL OR embeddingModel IS NOT :model")
     suspend fun needingEmbedding(model: String): List<JournalEntry>
+
+    /**
+     * Compare-and-set vector write: lands only if the transcript is still
+     * the one that was embedded. Returns 0 when the row was edited (or
+     * deleted) since, and the caller drops the stale vector. Never use
+     * [update] for derived columns: it writes every column from a snapshot
+     * and can revert a concurrent edit.
+     */
+    @Query("UPDATE entries SET embedding = :embedding, embeddingModel = :model WHERE id = :id AND transcript = :transcript")
+    suspend fun setEmbeddingIfUnchanged(id: Long, transcript: String, embedding: FloatArray, model: String): Int
+
+    /** Saves new text and clears the now-stale vector in one statement. */
+    @Query("UPDATE entries SET transcript = :transcript, embedding = NULL, embeddingModel = NULL WHERE id = :id")
+    suspend fun setTranscript(id: Long, transcript: String): Int
+
+    @Query("SELECT COUNT(*) FROM entries WHERE audioPath = :path")
+    suspend fun countByAudioPath(path: String): Int
 }
 
 @Database(entities = [JournalEntry::class], version = 2, exportSchema = false)
