@@ -48,6 +48,9 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = JournalDb.get(app).dao()
 
     val pipeline: StateFlow<RecordingController.PipelineState> = controller.pipeline
+
+    /** True while the launch sweep transcribes audio from an earlier session. */
+    val recovering: StateFlow<Boolean> = controller.recovering
     val recorder = controller.recorder
     val player = AudioPlayer()
 

@@ -365,6 +365,7 @@ fun JournalScreen(
     val entries by vm.entries.collectAsStateWithLifecycle()
     val allEntries by vm.allEntries.collectAsStateWithLifecycle()
     val pipeline by vm.pipeline.collectAsStateWithLifecycle()
+    val recovering by vm.recovering.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
     val playing by vm.player.playingFile.collectAsStateWithLifecycle()
     val transferStatus by vm.transferStatus.collectAsStateWithLifecycle()
@@ -576,8 +577,10 @@ fun JournalScreen(
                 ) { Text(p.message) }
                 else -> Unit
             }
+            // Independent of the pipeline: recovery and a new recording can overlap.
+            if (recovering) StatusLine("Recovering an earlier entry...")
 
-            if (entries.isEmpty() && pipeline is PipelineState.Idle) {
+            if (entries.isEmpty() && pipeline is PipelineState.Idle && !recovering) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         if (query.isBlank()) "Quiet in here. Record your first entry."
