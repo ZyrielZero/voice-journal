@@ -1,5 +1,6 @@
 package dev.zyriel.voicejournal.audio
 
+import dev.zyriel.voicejournal.TestPaths
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -96,7 +97,7 @@ class WavReaderTest {
             "clip60s.wav" to 965_680,
         )
         for ((name, samples) in expected) {
-            val f = File("src/debug/assets/accuracy/$name")
+            val f = TestPaths.debugAsset("accuracy/$name")
             org.junit.Assert.assertTrue("committed clip missing: $name", f.exists())
             assertEquals("sample count for $name", samples, WavReader.readFloatPcm(f).size)
         }

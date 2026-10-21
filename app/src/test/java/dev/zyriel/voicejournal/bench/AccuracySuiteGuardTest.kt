@@ -1,11 +1,11 @@
 package dev.zyriel.voicejournal.bench
 
+import dev.zyriel.voicejournal.TestPaths
 import dev.zyriel.voicejournal.whisper.Transcriber
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
-import java.io.File
 import java.io.FileNotFoundException
 
 /**
@@ -45,7 +45,7 @@ class AccuracySuiteGuardTest {
      */
     @Test
     fun fetchedVadModelIsValid() {
-        val f = File("src/main/assets/${Transcriber.VAD_ASSET}")
+        val f = TestPaths.mainAsset(Transcriber.VAD_ASSET)
         assertTrue("VAD model missing at ${f.absolutePath}; run scripts/fetch-models", f.exists())
         assertTrue("VAD model implausibly small (${f.length()} bytes)", f.length() > 500_000)
         val magic = f.inputStream().use { it.readNBytes(4) }

@@ -1,11 +1,11 @@
 package dev.zyriel.voicejournal.search
 
+import dev.zyriel.voicejournal.TestPaths
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Runs against the real vocab and the real int8 ONNX model bundled in assets,
@@ -15,7 +15,7 @@ import java.io.File
  */
 class EmbeddingEngineTest {
 
-    private fun asset(name: String) = File("src/main/assets/models/$name")
+    private fun asset(name: String) = TestPaths.mainAsset("models/$name")
 
     private fun tokenizer() = WordPieceTokenizer(asset("bge_vocab.txt").inputStream())
 
@@ -42,11 +42,25 @@ class EmbeddingEngineTest {
         assertEquals(t.encode("café", 8).toList(), t.encode("cafe", 8).toList())
     }
 
+    /**
+     * Out-of-vocabulary handling, both branches. "journaling" is not a whole
+     * vocab entry, so it must come back as two or more subword pieces with
+     * no [UNK]; a word past the tokenizer's length cap must come back as a
+     * single [UNK]. (The old version asserted only size > 3, which an [UNK]
+     * result would have failed despite the test's name.)
+     */
     @Test
     fun unknownWordSplitsToSubwordsOrUnk() {
         val t = tokenizer()
-        val ids = t.encode("journaling", 16)
-        assertTrue(ids.size > 3) // subword pieces, not dropped
+        val unk = asset("bge_vocab.txt").readLines().indexOf("[UNK]").toLong()
+        assertTrue("vocab has no [UNK]", unk >= 0)
+
+        val pieces = t.encode("journaling", 16).toList().drop(1).dropLast(1)
+        assertTrue("expected subword pieces, got $pieces", pieces.size >= 2)
+        assertTrue("subword split must not produce [UNK]: $pieces", unk !in pieces)
+
+        val overlong = t.encode("a".repeat(150), 16).toList().drop(1).dropLast(1)
+        assertEquals(listOf(unk), overlong)
     }
 
     @Test

@@ -1,10 +1,10 @@
 package dev.zyriel.voicejournal.bench
 
+import dev.zyriel.voicejournal.TestPaths
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 class AccuracyManifestTest {
 
@@ -60,10 +60,13 @@ class AccuracyManifestTest {
      */
     @Test
     fun committedManifestIsValid() {
-        val f = File("src/debug/assets/accuracy/manifest.json")
+        val f = TestPaths.debugAsset("accuracy/manifest.json")
         assertTrue("committed manifest missing at ${f.absolutePath}", f.exists())
         val m = AccuracyManifest.parse(f.readText())
-        assertEquals(3, m.clips.size)
+        // At least the original three clips; the set is meant to grow
+        // (scripts/build-accuracy-set.py), so no exact count is pinned.
+        assertTrue("expected at least 3 clips, got ${m.clips.size}", m.clips.size >= 3)
+        assertEquals("duplicate clip file names", m.clips.size, m.clips.map { it.file }.toSet().size)
         for (clip in m.clips) {
             assertTrue(
                 "reference for ${clip.file} too short to be a real clip",
@@ -71,7 +74,7 @@ class AccuracyManifestTest {
             )
             assertTrue(
                 "committed WAV missing for ${clip.file}",
-                File("src/debug/assets/accuracy/${clip.file}").exists(),
+                TestPaths.debugAsset("accuracy/${clip.file}").exists(),
             )
         }
     }
