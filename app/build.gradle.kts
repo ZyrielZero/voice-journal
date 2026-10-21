@@ -139,7 +139,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.0")
 
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
@@ -149,5 +149,5 @@ dependencies {
     // org.json is an Android framework class at runtime; JVM unit tests
     // (JournalArchiveTest) need the standalone artifact.
     testImplementation("org.json:json:20240303")
-    testImplementation("com.microsoft.onnxruntime:onnxruntime:1.22.0")
+    testImplementation("com.microsoft.onnxruntime:onnxruntime:1.31.0")
 }
