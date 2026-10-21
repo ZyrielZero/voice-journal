@@ -17,7 +17,7 @@ Transcription runs locally through [whisper.cpp](https://github.com/ggerganov/wh
 
 ## Performance
 
-Measured on a Pixel 10 Pro XL at commit `ce5f560`. Raw data: [`vj-benchmark-ce5f560.json`](vj-benchmark-ce5f560.json) and [`vj-accuracy-ce5f560.json`](vj-accuracy-ce5f560.json).
+Measured on a Pixel 10 Pro XL at commit `ce5f560`. Raw data: [`vj-benchmark-ce5f560.json`](docs/benchmarks/vj-benchmark-ce5f560.json) and [`vj-accuracy-ce5f560.json`](docs/benchmarks/vj-accuracy-ce5f560.json).
 
 | Operation | Median | Notes |
 |---|---|---|

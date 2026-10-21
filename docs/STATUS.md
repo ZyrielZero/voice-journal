@@ -6,8 +6,8 @@ Updated for **v1.0.0** (July 2026).
 
 - **1.0.0 shipped.** First tagged release; signed APK attached to the GitHub Release.
 - **Accuracy gate closed.** Model and VAD decisions were made from committed on-device
-  numbers, not vibes: [`vj-accuracy-ce5f560.json`](../vj-accuracy-ce5f560.json) and
-  [`vj-benchmark-ce5f560.json`](../vj-benchmark-ce5f560.json), measured on a Pixel 10 Pro XL.
+  numbers, not vibes: [`vj-accuracy-ce5f560.json`](benchmarks/vj-accuracy-ce5f560.json) and
+  [`vj-benchmark-ce5f560.json`](benchmarks/vj-benchmark-ce5f560.json), measured on a Pixel 10 Pro XL.
   - Corpus WER on a LibriSpeech test-clean subset: **6.31% VAD off / 4.50% VAD on**,
     zero deletions in every row. `base.en-q5_1` stays; `small.en`'s ~3% doesn't justify 3x the size.
   - VAD (silero v5.1.2) is **on by default** (`c286f5c`): 10.9 s → 2.3 s on a pause-heavy
