@@ -22,6 +22,14 @@ class CpuFeaturesTest {
     }
 
     @Test
+    fun crashMarkerForcesCompatEvenOnCapableCores() {
+        val info = cpuinfo(a55, a55, a55, a55)
+        assertEquals(CpuFeatures.COMPAT_LIB, CpuFeatures.libraryFor(info, fastCrashed = true))
+        assertEquals(CpuFeatures.OPTIMIZED_LIB, CpuFeatures.libraryFor(info, fastCrashed = false))
+        assertEquals(CpuFeatures.COMPAT_LIB, CpuFeatures.libraryFor(cpuinfo(a53), fastCrashed = true))
+    }
+
+    @Test
     fun baselineCoresPickCompat() {
         val info = cpuinfo(a53, a53)
         assertFalse(CpuFeatures.supportsDotprodFp16(info))

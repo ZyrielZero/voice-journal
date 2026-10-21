@@ -102,6 +102,11 @@ class Transcriber(private val context: Context) {
     /** See [DEFAULT_TEMPERATURE_INC]. Read at each transcription. */
     @Volatile var temperatureInc: Float = DEFAULT_TEMPERATURE_INC
 
+    init {
+        // Before anything touches WhisperBridge, whose init loads the library.
+        FastLibMarker.dir = context.filesDir
+    }
+
     // Both guarded by mutex.
     private var ctxPtr: Long = 0
     private var vadPath: String? = null
@@ -205,7 +210,7 @@ class Transcriber(private val context: Context) {
         val nst = suppressNst
         val tInc = temperatureInc
         withContext(Dispatchers.Default) {
-            WhisperBridge.fullTranscribe(ctx, samples, threads, vad, nst, tInc)
+            WhisperBridge.transcribe(ctx, samples, threads, vad, nst, tInc)
         }?.toString(Charsets.UTF_8)?.trim()
     }
 

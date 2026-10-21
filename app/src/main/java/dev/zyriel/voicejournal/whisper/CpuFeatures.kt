@@ -18,6 +18,14 @@ internal object CpuFeatures {
     const val OPTIMIZED_LIB = "whisperjni"
     const val COMPAT_LIB = "whisperjni_compat"
 
+    /**
+     * Written in filesDir before the first transcription on [OPTIMIZED_LIB]
+     * and deleted once it returns. Still present at the next load means
+     * that call never returned (SIGILL or another native crash), so the
+     * compat build is loaded from then on.
+     */
+    const val FAST_INFLIGHT_MARKER = "whisper_fast.inflight"
+
     private val REQUIRED = setOf("asimddp", "asimdhp")
 
     /**
@@ -37,9 +45,25 @@ internal object CpuFeatures {
         }
     }
 
-    fun libraryFor(cpuinfo: String?): String =
-        if (cpuinfo != null && supportsDotprodFp16(cpuinfo)) OPTIMIZED_LIB else COMPAT_LIB
+    /**
+     * @param fastCrashed whether [FAST_INFLIGHT_MARKER] survived from an
+     *   earlier process: the optimized build crashed here once, so it is
+     *   never chosen again regardless of what cpuinfo claims.
+     */
+    fun libraryFor(cpuinfo: String?, fastCrashed: Boolean = false): String =
+        if (!fastCrashed && cpuinfo != null && supportsDotprodFp16(cpuinfo)) OPTIMIZED_LIB else COMPAT_LIB
 
     /** Reads /proc/cpuinfo, or null if it cannot be read. */
     fun readCpuinfo(): String? = runCatching { File("/proc/cpuinfo").readText() }.getOrNull()
+}
+
+/**
+ * Where [CpuFeatures.FAST_INFLIGHT_MARKER] lives. Set to filesDir by
+ * whoever builds a Transcriber, before [WhisperBridge] is first touched;
+ * kept outside WhisperBridge because touching that object loads the
+ * library. Null (JVM tests, or nothing set yet) disables the marker.
+ */
+internal object FastLibMarker {
+    @Volatile var dir: File? = null
+    fun file(): File? = dir?.let { File(it, CpuFeatures.FAST_INFLIGHT_MARKER) }
 }

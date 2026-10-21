@@ -15,11 +15,23 @@ import android.util.Log
  */
 object WhisperBridge {
 
+    private const val TAG = "WhisperBridge"
+
     /** Which library was loaded, for the bench JSON and bug reports. */
     val loadedLibrary: String
 
+    /** Guarded by [probeLock]: the first optimized call has returned. */
+    private var fastProbed = false
+    private val probeLock = Any()
+
     init {
-        val wanted = CpuFeatures.libraryFor(CpuFeatures.readCpuinfo())
+        val marker = FastLibMarker.file()
+        val fastCrashed = marker?.exists() == true
+        if (fastCrashed) {
+            Log.i(TAG, "${CpuFeatures.OPTIMIZED_LIB} crashed in an earlier transcription " +
+                "(${marker?.name} present); loading ${CpuFeatures.COMPAT_LIB}")
+        }
+        val wanted = CpuFeatures.libraryFor(CpuFeatures.readCpuinfo(), fastCrashed)
         loadedLibrary = try {
             System.loadLibrary(wanted)
             wanted
@@ -27,10 +39,45 @@ object WhisperBridge {
             // A missing or unloadable optimized build must not take
             // transcription down with it; the baseline build runs anywhere.
             if (wanted == CpuFeatures.COMPAT_LIB) throw e
-            Log.w("WhisperBridge", "loading $wanted failed, falling back", e)
+            Log.w(TAG, "loading $wanted failed, falling back", e)
             System.loadLibrary(CpuFeatures.COMPAT_LIB)
             CpuFeatures.COMPAT_LIB
         }
+    }
+
+    /**
+     * [fullTranscribe] with the crash marker around the first call on the
+     * optimized library. A SIGILL kills the process inside the call, so the
+     * marker outlives it and the next load picks the compat build. Calls
+     * after the first, and every call on the compat build, go straight
+     * through.
+     */
+    fun transcribe(
+        ctxPtr: Long,
+        samples: FloatArray,
+        nThreads: Int,
+        vadModelPath: String?,
+        suppressNst: Boolean,
+        temperatureInc: Float,
+    ): ByteArray? {
+        if (loadedLibrary != CpuFeatures.OPTIMIZED_LIB) {
+            return fullTranscribe(ctxPtr, samples, nThreads, vadModelPath, suppressNst, temperatureInc)
+        }
+        synchronized(probeLock) {
+            if (!fastProbed) {
+                val marker = FastLibMarker.file()
+                runCatching { marker?.writeText(CpuFeatures.OPTIMIZED_LIB) }
+                try {
+                    return fullTranscribe(ctxPtr, samples, nThreads, vadModelPath, suppressNst, temperatureInc)
+                } finally {
+                    // Reached on return or a JVM exception: either way the
+                    // native code ran without killing the process.
+                    marker?.delete()
+                    fastProbed = true
+                }
+            }
+        }
+        return fullTranscribe(ctxPtr, samples, nThreads, vadModelPath, suppressNst, temperatureInc)
     }
 
     external fun initContext(modelPath: String): Long
