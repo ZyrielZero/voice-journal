@@ -61,13 +61,16 @@ class SearchTest {
     }
 
     @Test fun fullerTokenCoverageRanksHigher() {
+        // Entry 2 has both query words but out of order, so the exact-phrase
+        // bonus cannot fire: it must win on token coverage alone.
         val entries = listOf(
             entry(1, "thesis draft going slowly"),
-            entry(2, "thesis defense scheduled, defense prep starts now"),
+            entry(2, "defense prep for the thesis starts now"),
         )
         val r = KeywordSearch.rank("thesis defense", entries, 5)
         assertEquals(2L, r[0].first.id)
-        assertTrue(r[0].second > r[1].second)
+        assertEquals(1f, r[0].second, 1e-6f)    // full coverage, no phrase bonus
+        assertEquals(0.5f, r[1].second, 1e-6f)  // half coverage
     }
 
     @Test fun exactPhraseGetsBonus() {

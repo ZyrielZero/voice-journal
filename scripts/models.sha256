@@ -1,0 +1,4 @@
+4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f  ggml-base.en-q5_1.bin
+6c9c6101a956d62dfb5e7190c538226c0c5bb9cb27b651234b6df063ee7dbfe4  bge_small_en_v15_q8.onnx
+07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3  bge_vocab.txt
+29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf  ggml-silero-v5.1.2.bin

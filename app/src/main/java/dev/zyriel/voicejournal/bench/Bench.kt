@@ -1,5 +1,7 @@
 package dev.zyriel.voicejournal.bench
 
+import java.util.Locale
+
 /**
  * Benchmark core. Pure Kotlin so the measurement discipline itself is
  * unit-tested: warmup runs are discarded, the median (not mean) of the
@@ -50,9 +52,32 @@ object Bench {
         return Result(name, listOf(ms), ms, mapOf("kind" to "one-shot"))
     }
 
-    /** Flat, dependency-free JSON. Keys and values are escaped minimally. */
+    /**
+     * Escapes [s] for use inside a JSON string literal (RFC 8259 section 7):
+     * quote, backslash and every control character below U+0020. Values
+     * include raw whisper output, which can carry newlines or tabs, so a
+     * quote-and-backslash-only escape would write invalid JSON.
+     */
+    fun jsonEscape(s: String): String {
+        val sb = StringBuilder(s.length + 8)
+        for (c in s) {
+            when (c) {
+                '"' -> sb.append("\\\"")
+                '\\' -> sb.append("\\\\")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                '\b' -> sb.append("\\b")
+                '\u000C' -> sb.append("\\f")
+                else -> if (c < ' ') sb.append(String.format(Locale.US, "\\u%04x", c.code)) else sb.append(c)
+            }
+        }
+        return sb.toString()
+    }
+
+    /** Flat, dependency-free JSON. Keys and values go through [jsonEscape]. */
     fun toJson(meta: Map<String, String>, results: List<Result>): String {
-        fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
+        fun esc(s: String) = jsonEscape(s)
         val sb = StringBuilder()
         sb.append("{\n  \"meta\": {\n")
         meta.entries.joinTo(sb, ",\n") { (k, v) -> "    \"${esc(k)}\": \"${esc(v)}\"" }

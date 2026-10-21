@@ -1,14 +1,15 @@
 package dev.zyriel.voicejournal.bench
 
+import dev.zyriel.voicejournal.TestPaths
 import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import dev.zyriel.voicejournal.search.VectorSearch
 import dev.zyriel.voicejournal.search.WordPieceTokenizer
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 import kotlin.random.Random
 
 class BenchTest {
@@ -38,13 +39,37 @@ class BenchTest {
         assertTrue(json.contains("\"k\": \"v\""))
     }
 
+    @Test fun jsonEscapesControlCharactersAndRoundTrips() {
+        val nasty = "line one\nline \"two\"\ttab\r\\back\u0001\u001f\b\u000c end \u2019"
+        val json = Bench.toJson(
+            meta = mapOf("note" to nasty, "k\n" to "v"),
+            results = listOf(Bench.Result("r", listOf(1), 1, mapOf("hypothesis" to nasty))),
+        )
+        // No raw control character may survive inside the output's strings.
+        val body = json.replace("\n", "")
+        assertTrue("raw control char in $json", body.none { it < ' ' })
+        // And a real parser reads back exactly what went in.
+        val root = JSONObject(json)
+        assertEquals(nasty, root.getJSONObject("meta").getString("note"))
+        assertEquals("v", root.getJSONObject("meta").getString("k\n"))
+        val extra = root.getJSONArray("results").getJSONObject(0).getJSONObject("extra")
+        assertEquals(nasty, extra.getString("hypothesis"))
+    }
+
+    @Test fun jsonEscapeUsesShortFormsAndUnicodeEscapes() {
+        assertEquals("\\n\\r\\t\\b\\f", Bench.jsonEscape("\n\r\t\b\u000c"))
+        assertEquals("\\u0001\\u001f", Bench.jsonEscape("\u0001\u001f"))
+        assertEquals("\\\"\\\\", Bench.jsonEscape("\"\\"))
+        assertEquals("caf\u00e9 \u2019", Bench.jsonEscape("caf\u00e9 \u2019"))
+    }
+
     /**
      * Container-side performance run: embedding + search suites on JVM x86.
      * These numbers validate the harness and give rough magnitudes only.
      * They are NOT device benchmarks and must not be committed as such.
      */
     @Test fun jvmPerfRun() = runBlocking {
-        fun asset(n: String) = File("src/main/assets/models/$n")
+        fun asset(n: String) = TestPaths.mainAsset("models/$n")
         val engine = OnnxEmbeddingEngine(
             modelBytes = asset("bge_small_en_v15_q8.onnx").readBytes(),
             vocab = WordPieceTokenizer(asset("bge_vocab.txt").inputStream()),
@@ -68,7 +93,15 @@ class BenchTest {
 
         println("CONTAINER-X86 (not device): embed.typical median=${embed.medianMs}ms runs=${embed.runsMs}")
         println("CONTAINER-X86 (not device): search.n5000 median=${search.medianMs}ms runs=${search.runsMs}")
-        assertTrue(embed.medianMs < 5_000)
-        assertTrue(search.medianMs < 1_000)
+        // The harness itself is always checked; the wall-clock bounds are not,
+        // because shared CI runners are too noisy for latency assertions.
+        // Opt in with ./gradlew testDebugUnitTest -Pvj.perfAssertions=true.
+        assertEquals(5, embed.runsMs.size)
+        assertEquals(5, search.runsMs.size)
+        assertTrue((embed.runsMs + search.runsMs).all { it >= 0 })
+        if (TestPaths.perfAssertions) {
+            assertTrue(embed.medianMs < 5_000)
+            assertTrue(search.medianMs < 1_000)
+        }
     }
 }

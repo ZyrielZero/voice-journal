@@ -5,6 +5,20 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+# Read-only token: this workflow builds and tests, it never writes to the repo.
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR supersedes the running build.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NDK_VERSION: 28.2.13676358
+  CMAKE_VERSION: 3.22.1
 
 jobs:
   build:
@@ -21,33 +35,64 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       # EmbeddingEngineTest runs real ONNX inference on the JVM against the
-      # bundled model, so the models must exist before the test task. Cached
-      # on the fetch script hash; ~90 MB otherwise re-downloaded per run.
+      # bundled model, so the models must exist before the test task. The key
+      # is the pinned checksum file, so the cache changes exactly when a model
+      # does; the fetch script re-verifies every file even on a cache hit, so
+      # a corrupt cached file is replaced instead of kept forever.
       - name: Cache models
         uses: actions/cache@v4
         with:
           path: app/src/main/assets/models
-          key: models-${{ hashFiles('scripts/fetch-models.sh') }}
+          key: models-${{ hashFiles('scripts/models.sha256') }}
 
-      - name: Fetch models
+      - name: Fetch and verify models
         run: bash scripts/fetch-models.sh
 
       # The runner image ships an Android SDK; pin the exact NDK and CMake
       # the project builds against (16 KB page alignment depends on r28).
+      # Cached on the versions so sdkmanager only runs on a miss. The runner's
+      # ANDROID_HOME is a shell variable, not in the env context, so export it.
+      - name: Resolve SDK path
+        run: echo "SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+      - name: Cache NDK and CMake
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
+            ${{ env.SDK_ROOT }}/cmake/${{ env.CMAKE_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}-cmake-${{ env.CMAKE_VERSION }}
+
       - name: Install pinned NDK and CMake
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "ndk;28.2.13676358" "cmake;3.22.1" > /dev/null
+            "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION" > /dev/null
 
+      # Wall-clock assertions in BenchTest are off by default (shared runners
+      # are too noisy); pass -Pvj.perfAssertions=true locally to enable them.
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
-      # Assembles unsigned (no keystore.properties in CI) with R8 enabled.
-      # This proves keep rules and the native -O3 build compile and shrink
-      # cleanly on every push; runtime behavior still needs a device.
-      - name: Assemble release (unsigned, R8)
-        run: ./gradlew assembleRelease --stacktrace
+      # Builds unsigned (no keystore.properties in CI) with R8 enabled. This
+      # proves keep rules and the native -O3 build compile and shrink cleanly
+      # on every push, and produces the APK and the AAB Play needs so a CI
+      # build can be compared with a store build. Runtime behavior still
+      # needs a device.
+      - name: Assemble release APK and bundle (unsigned, R8)
+        run: ./gradlew assembleRelease bundleRelease --stacktrace
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-unsigned-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+            app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
 
       - name: Upload test reports
         if: failure()

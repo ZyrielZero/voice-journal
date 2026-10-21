@@ -25,8 +25,19 @@ import dev.zyriel.voicejournal.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** Copyright holder shown in the Appropriate Legal Notices (GPLv3 section 0/5). */
+private const val COPYRIGHT_LINE = "Copyright (C) 2026 ZyrielZero"
+
+/** Notices first, then the full license texts they reference that are not the GPL. */
+private val THIRD_PARTY_TEXTS = listOf(
+    "licenses/THIRD_PARTY_NOTICES.md",
+    "licenses/LICENSE-whisper.cpp.txt",
+    "licenses/OFL-Literata.txt",
+)
+
 /**
- * About: version, exact build SHA, the GPL notice the license requires,
+ * About: version, exact build SHA, the copyright line and GPL notice the
+ * license requires (its "Appropriate Legal Notices"), the full GPL text,
  * and the third-party notices. License texts come from assets that the
  * build copies out of the repo-root originals, so this screen can never
  * drift from what the repo actually says.
@@ -34,13 +45,14 @@ import kotlinx.coroutines.withContext
 @Composable
 fun AboutDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    var showNotices by remember { mutableStateOf(false) }
+    // Title and asset paths of the license text being shown, or null.
+    var shown by remember { mutableStateOf<Pair<String, List<String>>?>(null) }
 
-    if (showNotices) {
-        val notices by produceState("Loading...") {
-            value = readLicenseAsset(context, "licenses/THIRD_PARTY_NOTICES.md")
+    shown?.let { (title, paths) ->
+        val body by produceState("Loading...", paths) {
+            value = paths.map { readLicenseAsset(context, it) }.joinToString("\n\n---\n\n")
         }
-        LicenseTextDialog("Third-party notices", notices) { showNotices = false }
+        LicenseTextDialog(title, body) { shown = null }
         return
     }
 
@@ -61,6 +73,8 @@ fun AboutDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.height(12.dp))
+                Text(COPYRIGHT_LINE, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(4.dp))
                 Text(
                     "Free software under the GNU General Public License v3. " +
                         "You may redistribute and modify it under the terms of " +
@@ -70,7 +84,12 @@ fun AboutDialog(onDismiss: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { showNotices = true }) { Text("Third-party notices") }
+                TextButton(onClick = { shown = "GNU General Public License v3" to listOf("licenses/LICENSE") }) {
+                    Text("View license")
+                }
+                TextButton(onClick = { shown = "Third-party notices" to THIRD_PARTY_TEXTS }) {
+                    Text("Third-party notices")
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },

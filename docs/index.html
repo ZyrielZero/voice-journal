@@ -28,13 +28,14 @@
 </head>
 <body>
   <h1>Voice Journal — Privacy Policy</h1>
-  <p class="updated">Last updated: July 5, 2026</p>
+  <p class="updated">Last updated: October 21, 2026</p>
 
   <p>
     Voice Journal is a fully offline application. It is built so that your
-    data never leaves your device, and this is enforced by the operating
-    system: the app does not request the <code>INTERNET</code> permission,
-    so it is technically incapable of sending anything anywhere.
+    data never leaves your device unless you export it yourself, and this is
+    enforced by the operating system: the app does not request the
+    <code>INTERNET</code> permission, so it is technically incapable of
+    sending anything over a network.
   </p>
 
   <h2>What we collect</h2>
@@ -53,19 +54,42 @@
     accessible to anyone but you.
   </p>
 
+  <h2>Export and import</h2>
+  <p>
+    You can export your whole journal (audio and transcripts) as a zip file
+    and import it again later, for example to move to a new phone. An export
+    happens only when you start it, and the file goes only to the location
+    you pick in the Android file picker, such as a folder on the device or a
+    cloud-storage app you have installed. From that point the copy is
+    governed by wherever you saved it, not by this app. Import reads a zip
+    you choose in the same way. The app itself never sends the file
+    anywhere.
+  </p>
+
   <h2>Permissions</h2>
   <p>
-    The app requests microphone access solely to record the entries you
-    choose to record, and a foreground-service permission so recording can
-    continue with the screen off. These permissions are used only for that
-    purpose and never to move data off the device.
+    The app requests these Android permissions, and uses them only for the
+    purposes listed, never to move data off the device:
+  </p>
+  <ul>
+    <li><code>RECORD_AUDIO</code>: to record the entries you choose to record.</li>
+    <li><code>FOREGROUND_SERVICE</code> and <code>FOREGROUND_SERVICE_MICROPHONE</code>:
+      so a recording keeps running with the screen off.</li>
+    <li><code>POST_NOTIFICATIONS</code>: to show the notification Android requires
+      while recording is in progress.</li>
+    <li><code>WAKE_LOCK</code>: to keep the processor awake long enough to finish
+      recording and transcribing.</li>
+  </ul>
+  <p>
+    None of these permissions allow network access.
   </p>
 
   <h2>Deleting your data</h2>
   <p>
     Deleting an entry removes it from the device. Uninstalling the app
-    removes all of its data. Because nothing is ever sent off the device,
-    there is no server-side copy to request or erase.
+    removes all of its data. Because the app sends nothing anywhere, there is
+    no server-side copy to request or erase. Export files you created are
+    yours to keep or delete wherever you saved them.
   </p>
 
   <h2>Children's privacy</h2>

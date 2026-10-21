@@ -111,11 +111,17 @@ abstract class CopyLicenseAssets : DefaultTask() {
     @get:InputFiles
     abstract val licenseFiles: ConfigurableFileCollection
 
+    // wp5: whisper.cpp's MIT text (which also covers ggml) is also named
+    // LICENSE, so it is copied under a distinct name.
+    @get:InputFiles
+    abstract val whisperCppLicense: ConfigurableFileCollection
+
     @TaskAction
     fun run() {
         val dest = outputDir.get().asFile.resolve("licenses")
         dest.mkdirs()
         licenseFiles.forEach { it.copyTo(dest.resolve(it.name), overwrite = true) }
+        whisperCppLicense.forEach { it.copyTo(dest.resolve("LICENSE-whisper.cpp.txt"), overwrite = true) }
     }
 }
 
@@ -123,8 +129,12 @@ val copyLicenseAssets = tasks.register<CopyLicenseAssets>("copyLicenseAssets") {
     outputDir.set(layout.buildDirectory.dir("generated/licenseAssets"))
     licenseFiles.from(
         rootProject.file("THIRD_PARTY_NOTICES.md"),
-        rootProject.file("LICENSE")
+        rootProject.file("LICENSE"),
+        // wp5: OFL condition 2 requires the license to accompany the font.
+        rootProject.file("OFL-Literata.txt"),
     )
+    // wp5
+    whisperCppLicense.from(file("src/main/cpp/whisper.cpp/LICENSE"))
 }
 
 androidComponents {
@@ -134,6 +144,16 @@ androidComponents {
             CopyLicenseAssets::outputDir
         )
     }
+}
+
+// wp5: unit tests resolve committed assets through an absolute module path
+// instead of the working directory (IDE runners start elsewhere), and the
+// wall-clock assertions in BenchTest are opt-in: -Pvj.perfAssertions=true.
+val wp5AppDir: String = projectDir.absolutePath
+val wp5PerfAssertions: String = providers.gradleProperty("vj.perfAssertions").getOrElse("false")
+tasks.withType<Test>().configureEach {
+    systemProperty("vj.appDir", wp5AppDir)
+    systemProperty("vj.perfAssertions", wp5PerfAssertions)
 }
 
 dependencies {

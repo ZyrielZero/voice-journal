@@ -8,6 +8,7 @@ import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import dev.zyriel.voicejournal.search.VectorSearch
 import dev.zyriel.voicejournal.search.WordPieceTokenizer
 import dev.zyriel.voicejournal.whisper.Transcriber
+import dev.zyriel.voicejournal.whisper.WhisperBridge
 import dev.zyriel.voicejournal.data.JournalEntry
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -23,8 +24,10 @@ import kotlin.random.Random
  * (the UI entry point is gated on BuildConfig.DEBUG).
  *
  * Transcription clips are synthetic tones: whisper's compute scales with
- * audio length, not content, so LATENCY numbers are valid. Accuracy is
- * deliberately not measured here; that needs the committed speech clips.
+ * audio length, so these rows track relative cost between builds, but real
+ * speech decodes slower (about 1.7x to 1.8x at ce5f560), so they are not
+ * user-facing latency. Accuracy and real-speech latency come from
+ * [AccuracySuite], which uses the committed speech clips.
  */
 class BenchmarkSuite(private val context: Context) {
 
@@ -37,7 +40,18 @@ class BenchmarkSuite(private val context: Context) {
         "cores" to Runtime.getRuntime().availableProcessors().toString(),
         "android" to "API ${Build.VERSION.SDK_INT}",
         "environment" to "device",
+        "whisper_lib" to whisperLibrary(),
     )
+
+    /**
+     * Which native whisper library loaded (dotprod or baseline build), so a
+     * committed JSON says which code path it measured. Read reflectively
+     * because WhisperBridge.loadedLibrary lands on a parallel branch (wp1);
+     * after the merge this can become a direct property read.
+     */
+    private fun whisperLibrary(): String = runCatching {
+        WhisperBridge::class.java.getMethod("getLoadedLibrary").invoke(WhisperBridge) as String
+    }.getOrDefault("unknown")
 
     fun runAll(onProgress: (String) -> Unit): File = runBlocking {
         val results = ArrayList<Bench.Result>()
@@ -83,33 +97,54 @@ class BenchmarkSuite(private val context: Context) {
         }
 
         // ---- Transcription ----
+        // Synthetic 220 Hz tones: whisper's compute scales with audio length,
+        // so these rows track encoder/decoder cost across builds, but they
+        // are NOT speech latency (decoding real words costs more). Every row
+        // says synthetic=true and which VAD state it measured; real-speech
+        // latency for both VAD states comes from AccuracySuite.
         onProgress("Transcription: model load")
         val transcriber = Transcriber(context)
         val warmClip = syntheticWav(2)
         results += Bench.once("whisper.load_and_first_run") {
-            runBlocking { transcriber.transcribe(warmClip) }   // includes asset copy + ctx init
+            runBlocking { transcriber.transcribe(warmClip, useVad = false) }   // includes asset copy + ctx init
         }
-        for (secs in intArrayOf(10, 30, 60)) {
-            onProgress("Transcription: ${secs}s clip")
-            val clip = syntheticWav(secs)
-            val r = Bench.measure("whisper.clip${secs}s", warmups = 1, runs = 3) {
-                runBlocking { transcriber.transcribe(clip) }
+        for (vad in booleanArrayOf(false, true)) {
+            val mode = if (vad) "vad_on" else "vad_off"
+            // One untimed warm-up per VAD state: the first VAD-on call copies
+            // and initializes the silero model, which no timed row should carry.
+            runBlocking { transcriber.transcribe(warmClip, useVad = vad) }
+            for (secs in intArrayOf(10, 30, 60)) {
+                onProgress("Transcription: ${secs}s tone, $mode")
+                val clip = syntheticWav(secs)
+                var failed = false
+                val r = Bench.measure("whisper.clip${secs}s.$mode", warmups = 0, runs = 3) {
+                    val text: String? = runBlocking { transcriber.transcribe(clip, useVad = vad) }
+                    if (text == null) failed = true
+                }
+                val rtf = r.medianMs / (secs * 1000.0)
+                val extra = linkedMapOf(
+                    "clip_s" to "$secs",
+                    "use_vad" to vad.toString(),
+                    "synthetic" to "true",
+                    "realtime_factor" to String.format(Locale.US, "%.3f", rtf),
+                )
+                if (failed) extra["failed"] = "true"
+                results += r.copy(extra = extra)
             }
-            val rtf = r.medianMs / (secs * 1000.0)
-            results += r.copy(extra = mapOf("clip_s" to "$secs", "realtime_factor" to "%.3f".format(rtf)))
         }
-        // ---- VAD comparison ----
-        // Same 30s clip, half of it silence, decoded with VAD off then on.
+        // ---- VAD comparison (synthetic) ----
+        // Same 30s tone, half of it silence, decoded with VAD off then on.
         // CAVEAT: Silero may classify synthetic tones as non-speech and trim
         // more than a real voice would, which inflates the apparent win.
-        // These numbers gate nothing; the enable/disable decision waits for
-        // the committed real-speech clips (roadmap item 5).
-        onProgress("Transcription: VAD comparison")
+        // These rows gate nothing; AccuracySuite's acc.speech_gaps rows
+        // measure the same comparison on real LibriSpeech speech.
+        onProgress("Transcription: VAD comparison (synthetic)")
         val gappyClip = syntheticWav(30, silentEverySecond = true)
         for (vad in booleanArrayOf(false, true)) {
             val label = if (vad) "whisper.clip30s_gaps.vad_on" else "whisper.clip30s_gaps.vad_off"
             results += Bench.measure(label, warmups = 1, runs = 3,
-                extra = mapOf("clip_s" to "30", "silence_ratio" to "0.5", "synthetic" to "true")) {
+                extra = mapOf("clip_s" to "30", "silence_ratio" to "0.5", "synthetic" to "true",
+                    "use_vad" to vad.toString())) {
                 runBlocking { transcriber.transcribe(gappyClip, useVad = vad) }
             }
         }

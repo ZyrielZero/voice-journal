@@ -1,1 +1,13 @@
 app/src/main/cpp/whisper.cpp/** linguist-vendored
+
+# Binary assets: never diff, merge or normalize line endings.
+*.wav binary
+*.ttf binary
+*.png binary
+*.jar binary
+*.onnx binary
+*.bin binary
+
+# Scripts must keep their native line endings on every checkout.
+scripts/*.sh text eol=lf
+gradlew text eol=lf
