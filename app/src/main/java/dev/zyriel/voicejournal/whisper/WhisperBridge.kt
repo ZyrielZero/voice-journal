@@ -34,6 +34,19 @@ object WhisperBridge {
     }
 
     external fun initContext(modelPath: String): Long
-    external fun fullTranscribe(ctxPtr: Long, samples: FloatArray, nThreads: Int, vadModelPath: String?): String
+    /**
+     * Runs whisper_full on [samples] (16 kHz mono floats). Returns the
+     * transcript as UTF-8 bytes, empty for real silence, or null when
+     * transcription failed (null context, or whisper_full returned
+     * non-zero). [temperatureInc] <= 0 disables the temperature fallback.
+     */
+    external fun fullTranscribe(
+        ctxPtr: Long,
+        samples: FloatArray,
+        nThreads: Int,
+        vadModelPath: String?,
+        suppressNst: Boolean,
+        temperatureInc: Float,
+    ): ByteArray?
     external fun freeContext(ctxPtr: Long)
 }
