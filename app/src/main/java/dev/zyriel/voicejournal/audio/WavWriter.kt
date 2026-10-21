@@ -32,8 +32,16 @@ class WavWriter(private val file: File) : AutoCloseable {
     private var closed = false
 
     init {
-        raf.setLength(0)
-        raf.write(buildHeader(0))
+        // A throw here (disk full, read-only filesDir) would otherwise leak
+        // the descriptor: the constructor never returns, so no caller can
+        // close it.
+        try {
+            raf.setLength(0)
+            raf.write(buildHeader(0))
+        } catch (e: Throwable) {
+            runCatching { raf.close() }
+            throw e
+        }
     }
 
     /** Appends raw PCM samples. Little-endian, as WAV requires. */
@@ -52,13 +60,23 @@ class WavWriter(private val file: File) : AutoCloseable {
     /** Duration of audio written so far, in milliseconds. */
     fun durationMs(): Long = sampleCount() * 1000L / SAMPLE_RATE
 
-    /** Finalizes chunk sizes in the header and closes the file. Idempotent. */
+    /**
+     * Finalizes chunk sizes in the header and closes the file. Idempotent.
+     * The descriptor is released even when the header write throws (disk
+     * full): the exception still reaches the caller, and the file is left
+     * with zeroed sizes over intact PCM, which is exactly the crash layout
+     * [WavRepair] fixes on the next orphan sweep. A retry could not do
+     * better, so a failed close is not retryable.
+     */
     override fun close() {
         if (closed) return
         closed = true
-        raf.seek(0)
-        raf.write(buildHeader(dataBytes))
-        raf.close()
+        try {
+            raf.seek(0)
+            raf.write(buildHeader(dataBytes))
+        } finally {
+            raf.close()
+        }
     }
 
     private fun buildHeader(dataSize: Long): ByteArray {
