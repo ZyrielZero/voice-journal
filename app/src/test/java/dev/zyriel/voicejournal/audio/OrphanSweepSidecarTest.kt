@@ -175,6 +175,33 @@ class OrphanSweepSidecarTest {
     }
 
     @Test
+    fun attemptIsCountedBeforeRecoveryRuns() = runBlocking<Unit> {
+        // A native crash inside onRecoverable never returns to the sweep, so
+        // the count must already be on disk while the callback runs.
+        val dir = tempDir()
+        val wav = validWav(dir, "entry_crash.wav")
+        val counter = File(dir, wav.name + OrphanSweep.FAILURE_SIDECAR)
+        var seen: String? = null
+
+        OrphanSweep.sweep(dir, none) { seen = counter.readText() }
+
+        assertEquals("1", seen)
+        assertFalse("success clears the counter", counter.exists())
+    }
+
+    @Test
+    fun exhaustedCounterFromCrashedAttemptsQuarantinesUntried() = runBlocking<Unit> {
+        val dir = tempDir()
+        val wav = validWav(dir, "entry_sigsegv.wav")
+        File(dir, wav.name + OrphanSweep.FAILURE_SIDECAR).writeText(OrphanSweep.MAX_ATTEMPTS.toString())
+
+        val r = OrphanSweep.sweep(dir, none) { throw AssertionError("exhausted files are not retried") }
+
+        assertEquals(listOf(wav), r.quarantined)
+        assertTrue(File(File(dir, OrphanSweep.QUARANTINE_DIR), wav.name).exists())
+    }
+
+    @Test
     fun strayFailureCounterIsDeleted() = runBlocking<Unit> {
         val dir = tempDir()
         val stray = File(dir, "gone.wav" + OrphanSweep.FAILURE_SIDECAR).apply { writeText("2") }

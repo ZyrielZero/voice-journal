@@ -22,9 +22,11 @@ import java.io.IOException
  * if not, the import died before its insert and both are deleted (the
  * archive still holds the audio). A sidecar with no WAV is deleted.
  *
- * Failed recoveries are counted in a `<name>.wav.failures` sidecar. After
- * [MAX_ATTEMPTS] failures the WAV is moved to `quarantine/` (kept, never
- * deleted) so an oversized or poisoned file is not retried on every launch.
+ * Recovery attempts are counted in a `<name>.wav.failures` sidecar, written
+ * before [onRecoverable] runs and deleted when it succeeds, so an attempt
+ * that crashes the process still counts. After [MAX_ATTEMPTS] failed
+ * attempts the WAV is moved to `quarantine/` (kept, never deleted) so an
+ * oversized or poisoned file is not retried on every launch.
  *
  * Paths are compared by canonicalPath on both sides, so a writer that
  * spells the directory differently (/data/user/0 vs /data/data) cannot
@@ -133,10 +135,21 @@ object OrphanSweep {
                 skipped += f
                 continue
             }
+            // Earlier attempts that never came back (a native crash or a
+            // process kill inside onRecoverable) were already counted, so a
+            // file that has used up its attempts is quarantined untried.
+            if (failureCount(f) >= MAX_ATTEMPTS) {
+                if (quarantine(dir, f)) quarantined += f
+                continue
+            }
+            var attempts = -1 // the count after this attempt, once recorded
             try {
                 when (WavRepair.inspectAndRepair(f)) {
                     is WavRepair.Outcome.Repaired,
                     WavRepair.Outcome.AlreadyConsistent -> {
+                        // Counted BEFORE the attempt: a SIGSEGV or kill in
+                        // native transcription never reaches the catch below.
+                        attempts = recordFailure(f)
                         onRecoverable(f)
                         recovered += f
                         sidecar(f, FAILURE_SIDECAR).delete()
@@ -150,7 +163,8 @@ object OrphanSweep {
                 throw e
             } catch (e: Exception) {
                 failed += f to e
-                if (recordFailure(f) >= MAX_ATTEMPTS && quarantine(dir, f)) quarantined += f
+                if (attempts < 0) attempts = recordFailure(f) // the repair itself threw
+                if (attempts >= MAX_ATTEMPTS && quarantine(dir, f)) quarantined += f
             }
         }
         return Report(recovered, deleted, skipped, failed, quarantined)
@@ -161,11 +175,13 @@ object OrphanSweep {
 
     private fun sidecar(wav: File, suffix: String) = File(wav.parentFile, wav.name + suffix)
 
+    private fun failureCount(wav: File): Int =
+        runCatching { sidecar(wav, FAILURE_SIDECAR).readText().trim().toInt() }.getOrDefault(0)
+
     /** Increments and returns the persisted failure count for [wav]. */
     private fun recordFailure(wav: File): Int {
-        val side = sidecar(wav, FAILURE_SIDECAR)
-        val n = (runCatching { side.readText().trim().toInt() }.getOrDefault(0)) + 1
-        runCatching { side.writeText(n.toString()) }
+        val n = failureCount(wav) + 1
+        runCatching { sidecar(wav, FAILURE_SIDECAR).writeText(n.toString()) }
         return n
     }
 
