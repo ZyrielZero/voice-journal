@@ -68,7 +68,7 @@ Or open the project root in Android Studio and build. Unit tests run with `./gra
 
 ### Reproducing a release
 
-Release builds use exactly the toolchain pinned in the repo: AGP 9.2.1, Gradle 9.6.0 (wrapper), Kotlin 2.2.10, JDK 21, NDK 28.2.13676358, CMake 3.22.1, with the models fixed by `scripts/models.sha256`. CI builds an unsigned release APK and AAB on every push and keeps them as workflow artifacts. Each tagged release (`v1.0.0` onward) is the corresponding source for the APK built from it. The signing certificate fingerprint will be published here with the first Google Play release, so a sideloaded build can be checked against it.
+Release builds use exactly the toolchain pinned in the repo: AGP 9.2.1, Gradle 9.6.0 (wrapper), Kotlin 2.2.10, JDK 21, NDK 28.2.13676358, CMake 3.22.1, with the models fixed by `scripts/models.sha256`. CI builds an unsigned release APK and AAB on every push and keeps them as workflow artifacts. Each tagged release (`v1.0.0` onward) is the corresponding source for the APK built from it. Release APKs on GitHub are signed with the certificate whose SHA-256 is `e6be235505cece28cfc87abc5508469efa0da1295e253d8e70f8f35cc428eee5`; check a download with `apksigner verify --print-certs`. To get updates automatically, add this repository to [Obtainium](https://github.com/ImranR98/Obtainium).
 
 ## Stack
 

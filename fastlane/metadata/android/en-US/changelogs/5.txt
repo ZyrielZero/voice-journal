@@ -1,0 +1,6 @@
+- Faster transcription on newer phones, with automatic fallback on older ones.
+- Recordings survive crashes, calls and a full disk, and recover on next launch.
+- New app lock and screenshot blocking, both on by default.
+- Better search for non-English text; edits are never overwritten.
+- Safer import and export, with a note that exports are unencrypted.
+- New icon, rotation fixes and many smaller bug fixes.
