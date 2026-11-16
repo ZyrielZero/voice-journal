@@ -20,18 +20,17 @@ object WhisperBridge {
     /** Which library was loaded, for the bench JSON and bug reports. */
     val loadedLibrary: String
 
-    /** Guarded by [probeLock]: the first optimized call has returned. */
-    private var fastProbed = false
+    /** Guarded by [probeLock]: no probe is needed (any more) in this process. */
+    private var fastProbed: Boolean
     private val probeLock = Any()
 
     init {
-        val marker = FastLibMarker.file()
-        val fastCrashed = marker?.exists() == true
-        if (fastCrashed) {
-            Log.i(TAG, "${CpuFeatures.OPTIMIZED_LIB} crashed in an earlier transcription " +
-                "(${marker?.name} present); loading ${CpuFeatures.COMPAT_LIB}")
+        val avoidFast = FastLibMarker.shouldAvoidFast()
+        if (avoidFast) {
+            Log.i(TAG, "${CpuFeatures.OPTIMIZED_LIB} did not survive ${FastLibMarker.MAX_STRIKES} " +
+                "transcriptions in a row on this build; loading ${CpuFeatures.COMPAT_LIB}")
         }
-        val wanted = CpuFeatures.libraryFor(CpuFeatures.readCpuinfo(), fastCrashed)
+        val wanted = CpuFeatures.libraryFor(CpuFeatures.readCpuinfo(), avoidFast)
         loadedLibrary = try {
             System.loadLibrary(wanted)
             wanted
@@ -43,14 +42,16 @@ object WhisperBridge {
             System.loadLibrary(CpuFeatures.COMPAT_LIB)
             CpuFeatures.COMPAT_LIB
         }
+        // Already proven on this build: no probe, no marker, no window.
+        fastProbed = loadedLibrary != CpuFeatures.OPTIMIZED_LIB || FastLibMarker.isVerified()
     }
 
     /**
-     * [fullTranscribe] with the crash marker around the first call on the
+     * [fullTranscribe] with the strike marker around the first call on the
      * optimized library. A SIGILL kills the process inside the call, so the
-     * marker outlives it and the next load picks the compat build. Calls
-     * after the first, and every call on the compat build, go straight
-     * through.
+     * marker outlives it; [FastLibMarker] turns repeated leftovers into a
+     * fallback to the compat build. Once one call has returned on this
+     * build, and on the compat build always, calls go straight through.
      */
     fun transcribe(
         ctxPtr: Long,
@@ -60,19 +61,15 @@ object WhisperBridge {
         suppressNst: Boolean,
         temperatureInc: Float,
     ): ByteArray? {
-        if (loadedLibrary != CpuFeatures.OPTIMIZED_LIB) {
-            return fullTranscribe(ctxPtr, samples, nThreads, vadModelPath, suppressNst, temperatureInc)
-        }
         synchronized(probeLock) {
             if (!fastProbed) {
-                val marker = FastLibMarker.file()
-                runCatching { marker?.writeText(CpuFeatures.OPTIMIZED_LIB) }
+                FastLibMarker.beginProbe()
                 try {
                     return fullTranscribe(ctxPtr, samples, nThreads, vadModelPath, suppressNst, temperatureInc)
                 } finally {
                     // Reached on return or a JVM exception: either way the
                     // native code ran without killing the process.
-                    marker?.delete()
+                    FastLibMarker.endProbe()
                     fastProbed = true
                 }
             }

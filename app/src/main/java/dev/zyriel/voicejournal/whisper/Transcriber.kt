@@ -2,6 +2,7 @@ package dev.zyriel.voicejournal.whisper
 
 import android.content.Context
 import android.util.Log
+import dev.zyriel.voicejournal.BuildConfig
 import dev.zyriel.voicejournal.audio.AtomicMaterialize
 import dev.zyriel.voicejournal.audio.WavReader
 import kotlinx.coroutines.Dispatchers
@@ -89,10 +90,12 @@ class Transcriber(private val context: Context) {
      * VAD silence trim via whisper.cpp's built-in Silero graph. Enabled by
      * default on committed device numbers (vj-accuracy-ce5f560.json,
      * vj-benchmark-ce5f560.json): zero deletions in every accuracy row —
-     * the trim eats no words — with corpus WER improving 6.31% -> 4.50%,
-     * and the pause-heavy bench clip (50% silence, the realistic journal
-     * profile) dropping 10.9s -> 2.3s because whisper grinds on silence.
-     * Dense speech pays ~1.4x; journal entries are not dense speech.
+     * the trim eats no words — with corpus WER improving 6.31% -> 4.50%
+     * (a small sample: 222 reference words). Continuous speech pays about
+     * 1.5x to 1.7x in latency for it (60 s clip: 6.2 s off, 9.3 s on).
+     * The saving on pause-heavy speech has only been measured on a
+     * synthetic tone so far and is not a real-speech number; the
+     * `acc.speech_gaps` bench rows measure it and await a device run.
      */
     @Volatile var vadEnabled: Boolean = true
 
@@ -104,6 +107,7 @@ class Transcriber(private val context: Context) {
 
     init {
         // Before anything touches WhisperBridge, whose init loads the library.
+        FastLibMarker.buildId = BuildConfig.VERSION_CODE.toString()
         FastLibMarker.dir = context.filesDir
     }
 
