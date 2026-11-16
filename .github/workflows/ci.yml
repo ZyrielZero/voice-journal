@@ -84,6 +84,18 @@ jobs:
       - name: Assemble release APK and bundle (unsigned, R8)
         run: ./gradlew assembleRelease bundleRelease --stacktrace
 
+      # The promise on the front page, checked on the artifact itself: the
+      # APK must not request any network permission. Gradle's verifyNoNetwork
+      # task checks the merged manifest; this checks what was actually built.
+      - name: APK requests no network permission
+        run: |
+          apk=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          "$aapt2" dump permissions "$apk" | tee permissions.txt
+          if grep -E "INTERNET|NETWORK_STATE|WIFI_STATE" permissions.txt; then
+            echo "The APK requests a network permission"; exit 1
+          fi
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:

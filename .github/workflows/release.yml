@@ -100,13 +100,18 @@ jobs:
       - name: Build signed release APK
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Verify signature and rename
+      - name: Verify signature and permissions, then rename
         run: |
           apk=$(ls app/build/outputs/apk/release/*.apk | head -1)
           signer="$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner"
           "$signer" verify --print-certs "$apk" | tee certs.txt
           grep -q "certificate SHA-256 digest: $CERT_SHA256" certs.txt || {
             echo "APK is not signed with the pinned release certificate"; exit 1; }
+          aapt2="$ANDROID_HOME/build-tools/$BUILD_TOOLS/aapt2"
+          "$aapt2" dump permissions "$apk" | tee permissions.txt
+          if grep -E "INTERNET|NETWORK_STATE|WIFI_STATE" permissions.txt; then
+            echo "The APK requests a network permission"; exit 1
+          fi
           out="voice-journal-${GITHUB_REF_NAME#v}.apk"
           mv "$apk" "$out"
           sha256sum "$out" > "$out.sha256"

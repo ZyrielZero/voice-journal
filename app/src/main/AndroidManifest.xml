@@ -11,6 +11,15 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- ONNX Runtime's Android library (as of 1.31.0) ships a manifest that
+         asks for network access and registers a telemetry initializer.
+         Manifests merge, so without these three removals the built app
+         would request INTERNET no matter what this file says. They are
+         stripped here, and the build fails if the merged manifest ever
+         contains them again (verifyNoNetwork in app/build.gradle.kts). -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+
     <!-- Backup: allowBackup covers Android 11 and older; Android 12+ ignores
          it for device-to-device transfer, so dataExtractionRules excludes
          everything there too. -->
@@ -32,6 +41,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- See the note on INTERNET above: never let a library start
+             telemetry in this process. -->
+        <provider
+            android:name="ai.onnxruntime.TelemetryInitializer"
+            android:authorities="${applicationId}.onnxruntime_telemetry_initializer"
+            tools:node="remove" />
 
         <!-- Keeps recording and transcription alive with the screen off.
              microphone is a while-in-use type: this service must only ever be

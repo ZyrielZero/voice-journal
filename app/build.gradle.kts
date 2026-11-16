@@ -3,6 +3,10 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.GradleException
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
@@ -108,6 +112,45 @@ android {
     androidResources { noCompress += "onnx" }
 }
 
+/**
+ * The app's central promise is that it cannot touch the network. Library
+ * manifests merge into the app's, so a dependency update can add INTERNET
+ * without a line of this repo changing (ONNX Runtime 1.31 did exactly
+ * that, together with a telemetry initializer). This task sits in the
+ * manifest pipeline of every variant: it reads the merged manifest, fails
+ * the build if anything network-related is in it, and otherwise passes
+ * the manifest through unchanged.
+ */
+abstract class VerifyNoNetwork : DefaultTask() {
+    @get:InputFile
+    abstract val mergedManifest: RegularFileProperty
+
+    @get:OutputFile
+    abstract val verifiedManifest: RegularFileProperty
+
+    @TaskAction
+    fun run() {
+        val text = mergedManifest.get().asFile.readText()
+        val forbidden = listOf(
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.CHANGE_NETWORK_STATE",
+            "TelemetryInitializer",
+        )
+        val found = forbidden.filter { it in text }
+        if (found.isNotEmpty()) {
+            throw GradleException(
+                "The merged manifest contains $found. This app must not be able to reach the " +
+                    "network. A dependency's manifest added it; remove it in " +
+                    "src/main/AndroidManifest.xml with tools:node=\"remove\" (see the ONNX Runtime " +
+                    "entries there) and check what the library wanted it for."
+            )
+        }
+        verifiedManifest.get().asFile.writeText(text)
+    }
+}
+
 abstract class CopyLicenseAssets : DefaultTask() {
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
@@ -143,6 +186,12 @@ val copyLicenseAssets = tasks.register<CopyLicenseAssets>("copyLicenseAssets") {
 
 androidComponents {
     onVariants { variant ->
+        val verify = tasks.register<VerifyNoNetwork>(
+            "verify${variant.name.replaceFirstChar { it.uppercase() }}NoNetwork"
+        )
+        variant.artifacts.use(verify)
+            .wiredWithFiles(VerifyNoNetwork::mergedManifest, VerifyNoNetwork::verifiedManifest)
+            .toTransform(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
         variant.sources.assets?.addGeneratedSourceDirectory(
             copyLicenseAssets,
             CopyLicenseAssets::outputDir
