@@ -52,6 +52,41 @@ class WordPieceTokenizer(vocabStream: InputStream) {
         return ids.toLongArray()
     }
 
+    /**
+     * Encodes a text of any length as one or more windows of at most
+     * [maxLen] ids, each wrapped in [CLS] and [SEP] like [encode]. A text
+     * that fits is one window, identical to [encode]. A longer one is cut
+     * into windows that share [overlap] ids with their predecessor, so a
+     * sentence split by a boundary is still whole in one of them. Anything
+     * past [maxChunks] windows is dropped.
+     */
+    fun encodeChunks(text: String, maxLen: Int, overlap: Int, maxChunks: Int): List<LongArray> {
+        require(maxLen > 2 && maxChunks >= 1) { "maxLen=$maxLen maxChunks=$maxChunks" }
+        val body = maxLen - 2
+        val step = (body - overlap).coerceAtLeast(1)
+        // The most pieces maxChunks windows can cover; tokenizing stops there.
+        val cap = body + (maxChunks - 1).toLong() * step
+        val pieces = ArrayList<Long>(256)
+        outer@ for (word in basicTokenize(text)) {
+            for (id in wordPiece(word)) {
+                if (pieces.size >= cap) break@outer
+                pieces.add(id.toLong())
+            }
+        }
+        val out = ArrayList<LongArray>()
+        var start = 0
+        do {
+            val end = minOf(start + body, pieces.size)
+            val ids = LongArray(end - start + 2)
+            ids[0] = clsId.toLong()
+            for (i in start until end) ids[i - start + 1] = pieces[i]
+            ids[ids.size - 1] = sepId.toLong()
+            out.add(ids)
+            start += step
+        } while (end < pieces.size && out.size < maxChunks)
+        return out
+    }
+
     private fun basicTokenize(text: String): List<String> {
         val cleaned = StringBuilder(text.length)
         for (ch in text.lowercase()) {

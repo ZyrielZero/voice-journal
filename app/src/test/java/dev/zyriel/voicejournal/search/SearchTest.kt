@@ -89,4 +89,123 @@ class SearchTest {
     @Test fun blankQueryReturnsEmpty() {
         assertTrue(KeywordSearch.rank("  ", listOf(entry(1, "anything")), 5).isEmpty())
     }
+
+    @Test fun spokenQuestionWordsDoNotMatchEverything() {
+        // "my" is in both entries; only "thesis" says what the query is about.
+        val entries = listOf(
+            entry(1, "walked my dog around the lake"),
+            entry(2, "finished a chapter of my thesis"),
+        )
+        val r = KeywordSearch.rank("what did I say about my thesis", entries, 5)
+        assertEquals(listOf(2L), r.map { it.first.id })
+        assertEquals(1f, r[0].second, 1e-6f)
+    }
+
+    @Test fun aQueryOfOnlyCommonWordsStillSearches() {
+        val r = KeywordSearch.rank("what about it", listOf(entry(1, "thinking about it more"), entry(2, "pasta")), 5)
+        assertEquals(listOf(1L), r.map { it.first.id })
+    }
+
+    // Multi-window vectors
+
+    @Test fun bestCosineScoresALongEntryByItsBestWindow() {
+        val q = floatArrayOf(1f, 0f)
+        // Three windows back to back; the middle one matches the query.
+        val stored = floatArrayOf(0f, 1f, 1f, 0f, -1f, 0f)
+        assertEquals(1f, VectorSearch.bestCosine(q, stored)!!, 1e-6f)
+        assertEquals(VectorSearch.cosine(q, floatArrayOf(0.6f, 0.8f)), VectorSearch.bestCosine(q, floatArrayOf(0.6f, 0.8f))!!, 1e-6f)
+    }
+
+    @Test fun bestCosineRejectsVectorsOfAnotherShape() {
+        val q = floatArrayOf(1f, 0f)
+        assertEquals(null, VectorSearch.bestCosine(q, floatArrayOf(1f, 0f, 0f)))
+        assertEquals(null, VectorSearch.bestCosine(q, floatArrayOf()))
+    }
+
+    @Test fun topKSkipsMismatchedVectorsInsteadOfThrowing() {
+        val q = floatArrayOf(1f, 0f)
+        val entries = listOf(
+            entry(1, "other model", floatArrayOf(1f, 0f, 0f)),
+            entry(2, "long entry", floatArrayOf(0f, 1f, 0.9f, 0.1f)),
+        )
+        assertEquals(listOf(2L), VectorSearch.topK(q, entries, 5).map { it.first.id })
+    }
+
+    // HybridSearch
+
+    private val q = floatArrayOf(1f, 0f)
+    private fun at(sim: Float) = floatArrayOf(sim, kotlin.math.sqrt(1f - sim * sim))
+
+    @Test fun unrelatedEntriesAreNotResults() {
+        val entries = listOf(
+            entry(1, "made pasta for dinner", at(0.30f)),
+            entry(2, "long run by the river", at(0.45f)),
+        )
+        assertTrue(HybridSearch.rank("quantum physics", q, entries, 20, semanticFloor = 0.5f).isEmpty())
+    }
+
+    @Test fun relatedEntriesAreResultsWithoutSharingAWord() {
+        val entries = listOf(
+            entry(1, "felt anxious about the dissertation deadline", at(0.70f)),
+            entry(2, "made pasta for dinner", at(0.30f)),
+        )
+        val r = HybridSearch.rank("thesis stress", q, entries, 20, semanticFloor = 0.5f)
+        assertEquals(listOf(1L), r.map { it.entry.id })
+    }
+
+    @Test fun aWeakTailBehindAStrongAnswerIsDropped() {
+        val entries = listOf(
+            entry(1, "the answer", at(0.80f)),
+            entry(2, "same league", at(0.70f)),
+            entry(3, "above the floor but far behind", at(0.60f)),
+        )
+        val r = HybridSearch.rank("zzqx", q, entries, 20, semanticFloor = 0.5f, semanticMargin = 0.12f)
+        assertEquals(listOf(1L, 2L), r.map { it.entry.id })
+    }
+
+    @Test fun aLiteralWordMatchIsAResultEvenBelowTheFloor() {
+        // A name: the model has no idea who Priya is, the words do.
+        val entries = listOf(entry(1, "lunch with Priya downtown", at(0.20f)))
+        val r = HybridSearch.rank("Priya", q, entries, 20, semanticFloor = 0.5f)
+        assertEquals(listOf(1L), r.map { it.entry.id })
+    }
+
+    @Test fun aLiteralMatchOutranksAMerelyRelatedEntry() {
+        val entries = listOf(
+            entry(1, "thinking about grad school applications", at(0.62f)),
+            entry(2, "sent the thesis draft to my advisor", at(0.60f)),
+        )
+        val r = HybridSearch.rank("thesis", q, entries, 20, semanticFloor = 0.5f)
+        assertEquals(listOf(2L, 1L), r.map { it.entry.id })
+    }
+
+    @Test fun entriesWithoutAVectorAreFoundByTheirWords() {
+        // Just imported, or edited a moment ago: no vector yet.
+        val entries = listOf(
+            entry(1, "booked the dentist for Tuesday", null),
+            entry(2, "something else entirely", null),
+            entry(3, "loosely related", at(0.55f)),
+        )
+        val r = HybridSearch.rank("dentist", q, entries, 20, semanticFloor = 0.5f)
+        // Ranked as if on the floor plus its keyword credit: ahead of a weak semantic hit.
+        assertEquals(listOf(1L, 3L), r.map { it.entry.id })
+    }
+
+    @Test fun withoutAQueryVectorItIsKeywordSearch() {
+        val entries = listOf(
+            entry(1, "thesis defense went fine", at(0.9f)),
+            entry(2, "made pasta", at(0.9f)),
+        )
+        val r = HybridSearch.rank("thesis", null, entries, 20)
+        assertEquals(listOf(1L), r.map { it.entry.id })
+    }
+
+    @Test fun resultsAreCappedAtK() {
+        val entries = (1..30L).map { entry(it, "thesis note $it", at(0.6f)) }
+        assertEquals(20, HybridSearch.rank("thesis", q, entries, 20).size)
+    }
+
+    @Test fun blankQueryWithoutVectorReturnsNothing() {
+        assertTrue(HybridSearch.rank("  ", null, listOf(entry(1, "anything")), 20).isEmpty())
+    }
 }

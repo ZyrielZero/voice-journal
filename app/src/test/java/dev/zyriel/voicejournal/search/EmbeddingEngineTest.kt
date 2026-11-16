@@ -109,4 +109,73 @@ class EmbeddingEngineTest {
         )
         e.close()
     }
+
+    // Long entries: one vector per window
+
+    @Test
+    fun shortTextIsOneChunkIdenticalToEncode() {
+        val t = tokenizer()
+        val text = "I worked on my thesis introduction today."
+        val chunks = t.encodeChunks(text, maxLen = 256, overlap = 32, maxChunks = 16)
+        assertEquals(1, chunks.size)
+        assertEquals(t.encode(text, 256).toList(), chunks[0].toList())
+        // Empty text is still one well-formed window: [CLS] [SEP].
+        assertEquals(listOf(t.clsId.toLong(), t.sepId.toLong()), t.encodeChunks("", 256, 32, 16).single().toList())
+    }
+
+    @Test
+    fun longTextIsCutIntoOverlappingWindowsThatCoverIt() {
+        val t = tokenizer()
+        val words = (1..100).map { "word" } + listOf("zebra") + (1..100).map { "word" }
+        val all = t.encode(words.joinToString(" "), 10_000).toList().drop(1).dropLast(1)
+        val chunks = t.encodeChunks(words.joinToString(" "), maxLen = 34, overlap = 8, maxChunks = 100)
+
+        assertTrue(chunks.size > 1)
+        for (c in chunks) {
+            assertTrue(c.size <= 34)
+            assertEquals(t.clsId.toLong(), c.first())
+            assertEquals(t.sepId.toLong(), c.last())
+        }
+        // Stitching the windows back together, minus each overlap, gives the text.
+        val stitched = ArrayList<Long>()
+        chunks.forEachIndexed { i, c ->
+            val body = c.toList().drop(1).dropLast(1)
+            stitched += if (i == 0) body else body.drop(8)
+        }
+        assertEquals(all, stitched)
+    }
+
+    @Test
+    fun chunkCountIsCapped() {
+        val t = tokenizer()
+        val long = (1..5_000).joinToString(" ") { "word" }
+        assertEquals(3, t.encodeChunks(long, maxLen = 34, overlap = 8, maxChunks = 3).size)
+    }
+
+    @Test
+    fun aLongEntryIsFoundByWhatItSaysNearTheEnd() = runBlocking {
+        val e = engine()
+        val filler = "The weather was mild and I spent the morning tidying the kitchen and sorting old mail. "
+        val ending = "In the evening I finally booked the flights to Lisbon for our anniversary trip."
+        val long = filler.repeat(40) + ending
+
+        val stored = e.embed(long)!!
+        assertTrue("expected several windows, got ${stored.size / OnnxEmbeddingEngine.DIM}",
+            stored.size > OnnxEmbeddingEngine.DIM && stored.size % OnnxEmbeddingEngine.DIM == 0)
+
+        val query = e.embedQuery("booking flights to Lisbon")!!
+        assertEquals(OnnxEmbeddingEngine.DIM, query.size)
+        val whole = VectorSearch.bestCosine(query, stored)!!
+        // What the old single-vector embedding saw: only the first window.
+        val firstWindowOnly = VectorSearch.cosine(query, stored.copyOfRange(0, OnnxEmbeddingEngine.DIM))
+        assertTrue("end of entry must be searchable: best=$whole first=$firstWindowOnly", whole > firstWindowOnly + 0.1f)
+        e.close()
+    }
+
+    @Test
+    fun aShortEntryIsStillASingleVector() = runBlocking {
+        val e = engine()
+        assertEquals(OnnxEmbeddingEngine.DIM, e.embed("Short entry.")!!.size)
+        e.close()
+    }
 }
