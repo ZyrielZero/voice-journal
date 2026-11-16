@@ -25,6 +25,12 @@ val sha = runCatching {
     }.standardOutput.asText.get().trim()
 }.getOrDefault("nogit")
 
+// -Pvj.skipNative=true builds without the whisper JNI libraries and without
+// the arm64-only ABI filter. Only for the instrumented tests in CI: the
+// emulator there is x86_64, and those tests (Room migrations) never touch
+// whisper. An APK built this way cannot transcribe; never ship one.
+val skipNative: Boolean = providers.gradleProperty("vj.skipNative").orNull == "true"
+
 android {
     namespace = "dev.zyriel.voicejournal"
     compileSdk = 36
@@ -36,18 +42,21 @@ android {
         targetSdk = 36
         versionCode = 5
         versionName = "1.1.0"
-        ndk { abiFilters += "arm64-v8a" }
-
         buildConfigField("String", "GIT_SHA", "\"$sha\"")
-        externalNativeBuild {
-            cmake { arguments += "-DANDROID_STL=c++_static" }
+        if (!skipNative) {
+            ndk { abiFilters += "arm64-v8a" }
+            externalNativeBuild {
+                cmake { arguments += "-DANDROID_STL=c++_static" }
+            }
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+    if (!skipNative) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
     }
 
