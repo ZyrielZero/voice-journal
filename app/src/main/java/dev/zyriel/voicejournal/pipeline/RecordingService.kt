@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -32,11 +33,19 @@ import kotlinx.coroutines.launch
  * transcription is in flight, and while the launch sweep recovers an orphan. Deliberately does no work itself: the pipeline
  * lives in [RecordingController], and this service exists so the OS lets it
  * run with the screen off. Started by the controller from a foreground
- * context (the Rec tap, or the launch sweep right after the app opens),
- * which the while-in-use microphone type requires. A recovery-only start is
- * made only when RECORD_AUDIO is granted and the process is foreground
- * (RecordingController.beginRecovery); otherwise recovery runs without
- * this service, so every startForegroundService reaches startForeground.
+ * context (the Rec tap, or the launch sweep right after the app opens).
+ *
+ * Foreground-service type follows the work. A recording, and the
+ * transcription that follows it, run under `microphone` (a while-in-use
+ * type that needs RECORD_AUDIO). A recovery-only start, where the
+ * microphone is not in use at all, runs under a file-processing type that
+ * needs no grant: `mediaProcessing` on Android 15+, `dataSync` before it.
+ * A Rec tap during recovery sends a second start command, which re-enters
+ * the foreground under `microphone` while the app is visible. The type is
+ * never switched the other way mid-flight. A recovery-only start is made
+ * only while the process is foreground (RecordingController.beginRecovery);
+ * otherwise recovery runs without this service, so every
+ * startForegroundService reaches startForeground.
  *
  * Wakelock rationale: AudioRecord holds a CPU wakelock internally while
  * capturing, but transcription runs for a few seconds after capture stops,
@@ -53,8 +62,8 @@ import kotlinx.coroutines.launch
  *
  * Hardware-verified (Pixel 10 Pro XL): screen-off recording, the Stop
  * notification action, and the notifications-denied fallback all passed the
- * robustness checklist. Audio focus and the recovery phase are not yet
- * device-verified.
+ * robustness checklist. Audio focus, the recovery phase and its
+ * file-processing service types are not yet device-verified.
  */
 class RecordingService : Service() {
 
@@ -77,18 +86,17 @@ class RecordingService : Service() {
         }
 
         createChannel()
-        // Reachable only from a visible app with the mic granted (the
-        // controller checks both before a recovery-only start), but the
-        // permission can still be revoked in the gap, and Android 12+
-        // refuses a background start; either throws. The pipeline keeps
-        // running without the service, so give up on the service, not the
-        // work.
+        // Reachable only from a visible app (the controller checks before
+        // a recovery-only start), but the mic permission can be revoked in
+        // the gap, and Android 12+ refuses a background start; either
+        // throws. The pipeline keeps running without the service, so give
+        // up on the service, not the work.
         try {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
                 buildNotification(phaseOf(controller.pipeline.value)),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                serviceTypeFor(controller.pipeline.value),
             )
         } catch (e: Exception) {
             Log.w(TAG, "startForeground refused: ${e.message}")
@@ -128,6 +136,29 @@ class RecordingService : Service() {
             }
         }
         return START_NOT_STICKY
+    }
+
+    /**
+     * `microphone` while a recording or its transcription is in flight;
+     * otherwise this start is for recovery, which only reads a file.
+     */
+    private fun serviceTypeFor(state: RecordingController.PipelineState): Int = when {
+        state is RecordingController.PipelineState.Recording ||
+            state is RecordingController.PipelineState.Transcribing ->
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        Build.VERSION.SDK_INT >= 35 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+        else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+    }
+
+    /**
+     * Android 15+ gives the file-processing types a daily time budget and
+     * calls this when it runs out; the service must leave the foreground
+     * within seconds. Recovery carries on without it and anything cut
+     * short is retried by the next launch's sweep.
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "foreground service time limit reached (type $fgsType), stopping")
+        stopSelf()
     }
 
     private fun phaseOf(state: RecordingController.PipelineState): Phase = when (state) {
@@ -193,9 +224,9 @@ class RecordingService : Service() {
             .setSmallIcon(R.drawable.ic_notification_mic)
             .setContentTitle(
                 when (phase) {
-                    Phase.Recording -> "Recording journal entry"
-                    Phase.Transcribing -> "Transcribing…"
-                    Phase.Recovering -> "Recovering an unsaved entry…"
+                    Phase.Recording -> getString(R.string.notif_recording)
+                    Phase.Transcribing -> getString(R.string.notif_transcribing)
+                    Phase.Recovering -> getString(R.string.notif_recovering)
                 }
             )
             .setOngoing(true)
@@ -207,7 +238,7 @@ class RecordingService : Service() {
                 .setUsesChronometer(true)
                 .setWhen(System.currentTimeMillis())
                 .addAction(
-                    0, "Stop",
+                    0, getString(R.string.action_stop),
                     PendingIntent.getService(
                         this, 1,
                         Intent(this, RecordingService::class.java).setAction(ACTION_STOP),
@@ -221,9 +252,9 @@ class RecordingService : Service() {
     private fun createChannel() {
         notificationManager().createNotificationChannel(
             NotificationChannel(
-                CHANNEL_ID, "Recording",
+                CHANNEL_ID, getString(R.string.notif_channel_name),
                 NotificationManager.IMPORTANCE_LOW, // no sound, no heads-up; it's a status, not an alert
-            ).apply { description = "Shown while a journal entry is being recorded or transcribed" }
+            ).apply { description = getString(R.string.notif_channel_description) }
         )
     }
 

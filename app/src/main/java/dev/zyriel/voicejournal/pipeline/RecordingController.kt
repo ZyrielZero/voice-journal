@@ -1,18 +1,18 @@
 package dev.zyriel.voicejournal.pipeline
 
-import android.Manifest
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import dev.zyriel.voicejournal.audio.AudioRecorder
 import dev.zyriel.voicejournal.audio.OrphanSweep
 import dev.zyriel.voicejournal.audio.WavWriter
+import dev.zyriel.voicejournal.data.JournalDao
 import dev.zyriel.voicejournal.data.JournalDb
 import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.data.JournalStore
+import dev.zyriel.voicejournal.search.EmbeddingEngine
 import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import dev.zyriel.voicejournal.search.WordPieceTokenizer
 import dev.zyriel.voicejournal.whisper.ModelUnavailableException
@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -48,8 +50,60 @@ import java.util.Locale
  * Reader, the stop compare-and-set) carry the unit tests. Newer glue is NOT
  * yet device-verified: the auto-stop collector, the capture-error salvage
  * path, the recovery foreground service and audio-focus stop.
+ *
+ * Everything the pipeline touches outside itself (the microphone, the
+ * transcriber, the database, the foreground service) is passed in, so the
+ * state machine, the stop races, the salvage path and the launch sweep run
+ * in JVM unit tests against fakes (RecordingControllerTest). [get] does the
+ * Android wiring.
  */
-class RecordingController private constructor(private val app: Context) {
+class RecordingController internal constructor(
+    /**
+     * Survives configuration changes and Activity death; dies with the
+     * process. There is no Application-level uncaught handler, so anything
+     * that escapes a coroutine here would kill the process; [get] installs
+     * a handler that logs it instead. Exceptions are still caught where
+     * they happen; that handler is the backstop, not the policy.
+     */
+    private val scope: CoroutineScope,
+    val recorder: Capture,
+    private val dao: JournalDao,
+    /** Where recordings live. Created if missing. */
+    private val dir: File,
+    /**
+     * Transcribes one WAV: the text ("" for real silence), null when native
+     * transcription failed, [ModelUnavailableException] when the model
+     * itself cannot load. [Transcriber.transcribeStrict] on device.
+     */
+    private val transcribe: suspend (File) -> String?,
+    /** Builds the embedding engine once at start; null leaves search on keywords. */
+    private val loadEngine: suspend () -> EmbeddingEngine?,
+    private val host: Host,
+    /** Whether an import is running right now; its WAVs are not orphans. */
+    private val importInFlight: () -> Boolean,
+    /** Asks for an embedding backfill pass. */
+    private val backfill: () -> Unit,
+    private val now: () -> Long = System::currentTimeMillis,
+    private val maxClipMs: Long = Transcriber.MAX_CLIP_SECONDS * 1000L,
+) {
+
+    /** What the pipeline needs from the microphone; [AudioRecorder] on device. */
+    interface Capture {
+        val state: StateFlow<AudioRecorder.State>
+        val elapsedMs: StateFlow<Long>
+        /** True once capture into [outFile] is launched; false with the reason in [state]. */
+        fun start(outFile: File): Boolean
+        /** Stops capture and returns once the WAV is finalized on disk. */
+        suspend fun stopAndWait()
+    }
+
+    /** The Android process around the pipeline. */
+    interface Host {
+        /** Starts the foreground service. Must not throw. */
+        fun startService()
+        /** Whether a recovery-only foreground service may be started right now. */
+        fun canHostRecoveryService(): Boolean
+    }
 
     sealed interface PipelineState {
         data object Idle : PipelineState
@@ -57,23 +111,6 @@ class RecordingController private constructor(private val app: Context) {
         data object Transcribing : PipelineState
         data class Failed(val message: String) : PipelineState
     }
-
-    /**
-     * Survives configuration changes and Activity death; dies with the
-     * process. There is no Application-level uncaught handler, so anything
-     * that escapes a coroutine here would kill the process; the handler logs
-     * it instead. Exceptions are still caught where they happen; this is
-     * the backstop, not the policy.
-     */
-    private val scope = CoroutineScope(
-        SupervisorJob() + Dispatchers.Default +
-            CoroutineExceptionHandler { _, e -> Log.e(TAG, "uncaught in controller scope", e) }
-    )
-
-    val recorder = AudioRecorder(scope)
-    private val dao = JournalDb.get(app).dao()
-    private val transcriber = Transcriber(app)
-    private val dir = File(app.filesDir, "recordings").apply { mkdirs() }
 
     private val _pipeline = MutableStateFlow<PipelineState>(PipelineState.Idle)
     val pipeline: StateFlow<PipelineState> = _pipeline.asStateFlow()
@@ -94,24 +131,39 @@ class RecordingController private constructor(private val app: Context) {
     val quarantined: StateFlow<Int> = _quarantined.asStateFlow()
 
     /** Null until initialized; stays null if init fails, and search falls back to keywords. */
-    @Volatile var engine: OnnxEmbeddingEngine? = null
+    @Volatile var engine: EmbeddingEngine? = null
         private set
 
-    /** Process-lived owner of every write that must outlive the UI (contract C3). */
-    val store = JournalStore(app, dao, scope) { engine }
+    /**
+     * Process-lived owner of every write that must outlive the UI (contract
+     * C3). Set by [get] before [start]; unit tests of the pipeline do not
+     * need one.
+     */
+    lateinit var store: JournalStore
+        internal set
 
     @Volatile private var activeFile: File? = null
 
+    /** One sweep at a time: the launch sweep and a user-requested retry must not overlap. */
+    private val sweepMutex = Mutex()
+
     init {
+        dir.mkdirs()
+    }
+
+    /**
+     * Starts the collectors and the launch work (engine load, orphan
+     * sweep, backfill). Called once, after construction and wiring; kept
+     * out of init so nothing runs against a half-built object.
+     */
+    fun start() {
         // Auto-stop at the transcription cap so no recording can outgrow
         // what the pipeline can hold in memory (Transcriber.MAX_CLIP_SECONDS).
         // Lives here, not in AudioRecorder: the recorder is a dumb capture
         // loop and the cap is pipeline policy.
         scope.launch {
             recorder.elapsedMs.collect { ms ->
-                if (_pipeline.value is PipelineState.Recording &&
-                    ms >= Transcriber.MAX_CLIP_SECONDS * 1000L
-                ) {
+                if (_pipeline.value is PipelineState.Recording && ms >= maxClipMs) {
                     stopAndTranscribe()
                 }
             }
@@ -132,28 +184,64 @@ class RecordingController private constructor(private val app: Context) {
             }
         }
         scope.launch {
-            engine = runCatching {
-                OnnxEmbeddingEngine(
-                    modelBytes = app.assets.open("models/bge_small_en_v15_q8.onnx").use { it.readBytes() },
-                    vocab = app.assets.open("models/bge_vocab.txt").use { WordPieceTokenizer(it) },
-                )
-            }.getOrNull()
-            try {
-                sweepOrphans()
+            engine = try {
+                loadEngine()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // The database itself is unusable (a schema slip): every
-                // reference check would fail, so nothing was touched.
-                Log.e(TAG, "orphan sweep aborted", e)
+                null
             }
-            store.requestBackfill()
+            runSweep()
+            backfill()
+        }
+    }
+
+    /** [sweepOrphans] under [sweepMutex], with a broken database contained. */
+    private suspend fun runSweep() = sweepMutex.withLock {
+        try {
+            sweepOrphans()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The database itself is unusable (a schema slip): every
+            // reference check would fail, so nothing was touched.
+            Log.e(TAG, "orphan sweep aborted", e)
         }
     }
 
     /**
-     * Recovers WAVs stranded by an earlier process death. Runs once per
-     * process. Per-file failures are captured in the report and logged, not
+     * Gives quarantined recordings another round: moves them back beside
+     * the live recordings with a clean failure count and sweeps again, so
+     * each is transcribed like any other orphan. Whatever still fails is
+     * counted afresh and returns to quarantine after the usual attempts.
+     */
+    fun retryQuarantined() {
+        scope.launch {
+            sweepMutex.withLock {
+                val moved = OrphanSweep.releaseQuarantine(dir)
+                Log.i(TAG, "retrying $moved quarantined recordings")
+            }
+            runSweep()
+        }
+    }
+
+    /** Deletes the quarantined recordings. Only on a confirmed user action. */
+    fun deleteQuarantined() {
+        scope.launch(Dispatchers.IO) {
+            sweepMutex.withLock {
+                val n = OrphanSweep.deleteQuarantine(dir)
+                Log.i(TAG, "deleted $n quarantined recordings")
+                _quarantined.value = OrphanSweep.quarantinedCount(dir)
+            }
+        }
+    }
+
+    /** The quarantined WAVs, so an export can carry audio no entry holds yet. */
+    fun quarantinedFiles(): List<File> = OrphanSweep.quarantinedFiles(dir)
+
+    /**
+     * Recovers WAVs stranded by an earlier process death. Runs at launch
+     * and when the user retries quarantined audio. Per-file failures are captured in the report and logged, not
      * thrown and not swallowed: a bad orphan stays on disk for the next
      * sweep (until OrphanSweep quarantines it) and cannot shadow the
      * recoverable ones behind it. The reference check and the active path
@@ -161,8 +249,7 @@ class RecordingController private constructor(private val app: Context) {
      * inserted mid-sweep is skipped, not recovered a second time.
      *
      * While an orphan is being transcribed, [recovering] is true and, when
-     * the app is in the foreground with the mic granted, the foreground
-     * service is held, so a backgrounded app is not frozen or killed
+     * the app is in the foreground, the foreground service is held, so a backgrounded app is not frozen or killed
      * mid-recovery. A live recording's transcription still queues
      * behind the orphan on the Transcriber mutex.
      */
@@ -173,7 +260,7 @@ class RecordingController private constructor(private val app: Context) {
                 isReferenced = { path -> dao.countByAudioPath(path) > 0 },
                 activePath = { activeFile?.absolutePath },
                 // An import running now owns its .importing WAVs; leave them.
-                importInFlight = { store.isImporting },
+                importInFlight = importInFlight,
             ) { file ->
                 beginRecovery()
                 // Recovered audio gets a real transcript; timestamp comes from
@@ -198,23 +285,14 @@ class RecordingController private constructor(private val app: Context) {
     private fun beginRecovery() {
         if (_recovering.value) return
         _recovering.value = true
-        // The service is a microphone-type FGS. Starting one for recovery is
-        // only legal (and only guaranteed to reach startForeground, which a
-        // startForegroundService must) while the mic is granted and the app
-        // is in the foreground. Otherwise recover without it: the work still
-        // runs, just unprotected from the freezer, and an interrupted file
-        // is retried by the next sweep.
-        if (canHostRecoveryService()) startService()
+        // A recovery-only start runs the service under its file-processing
+        // type, which needs no microphone grant, but a foreground service
+        // can still only be started while the app is in the foreground.
+        // Otherwise recover without it: the work still runs, just
+        // unprotected from the freezer, and an interrupted file is retried
+        // by the next sweep.
+        if (host.canHostRecoveryService()) host.startService()
         else Log.i(TAG, "recovering without the foreground service")
-    }
-
-    private fun canHostRecoveryService(): Boolean {
-        val mic = ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-        if (!mic) return false
-        val info = ActivityManager.RunningAppProcessInfo()
-        ActivityManager.getMyMemoryState(info)
-        return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
     /**
@@ -229,8 +307,13 @@ class RecordingController private constructor(private val app: Context) {
      */
     fun startRecording() {
         if (_pipeline.value !is PipelineState.Idle && _pipeline.value !is PipelineState.Failed) return
-        val name = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val f = File(dir, "entry_$name.wav")
+        val name = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(now()))
+        // The stamp has one-second resolution. A second recording started
+        // within the same second as a very short first one must not write
+        // over the WAV the first entry now points at.
+        var f = File(dir, "entry_$name.wav")
+        var n = 2
+        while (f.exists()) f = File(dir, "entry_${name}_${n++}.wav")
         if (!recorder.start(f)) {
             val reason = (recorder.state.value as? AudioRecorder.State.Error)?.message
             _pipeline.value = PipelineState.Failed(reason ?: "Could not start recording")
@@ -238,18 +321,7 @@ class RecordingController private constructor(private val app: Context) {
         }
         activeFile = f
         _pipeline.value = PipelineState.Recording
-        startService()
-    }
-
-    private fun startService() {
-        try {
-            ContextCompat.startForegroundService(app, Intent(app, RecordingService::class.java))
-        } catch (e: Exception) {
-            // Background start refused (ForegroundServiceStartNotAllowedException)
-            // or similar. The work still runs; it just is not protected from
-            // the freezer while the app is in the background.
-            Log.w(TAG, "could not start the foreground service: ${e.message}")
-        }
+        host.startService()
     }
 
     /**
@@ -272,7 +344,7 @@ class RecordingController private constructor(private val app: Context) {
                     finish(PipelineState.Failed("Recording failed: $captureError"))
                     return@launch
                 }
-                insertTranscribed(file, System.currentTimeMillis())
+                insertTranscribed(file, now())
                 finish(PipelineState.Idle)
             } catch (e: CancellationException) {
                 throw e
@@ -307,7 +379,7 @@ class RecordingController private constructor(private val app: Context) {
      * silence ("") is still saved, as "(no speech detected)".
      */
     private suspend fun insertTranscribed(file: File, timestampMs: Long) {
-        val text: String? = transcriber.transcribeStrict(file)
+        val text: String? = transcribe(file)
         if (text == null) {
             throw IllegalStateException("Transcription failed. The audio is kept and will be retried on next launch.")
         }
@@ -335,7 +407,7 @@ class RecordingController private constructor(private val app: Context) {
      * Kept for existing callers; delegates to [JournalStore.requestBackfill],
      * which is single-flight and never overwrites an edited transcript.
      */
-    fun requestBackfill() = store.requestBackfill()
+    fun requestBackfill() = backfill()
 
     fun dismissError() {
         if (_pipeline.value is PipelineState.Failed) _pipeline.value = PipelineState.Idle
@@ -348,8 +420,66 @@ class RecordingController private constructor(private val app: Context) {
 
         fun get(context: Context): RecordingController =
             instance ?: synchronized(this) {
-                instance ?: RecordingController(context.applicationContext).also { instance = it }
+                instance ?: create(context.applicationContext).also { instance = it }
             }
+
+        /** The on-device wiring: real microphone, whisper, Room and service. */
+        private fun create(app: Context): RecordingController {
+            val scope = CoroutineScope(
+                SupervisorJob() + Dispatchers.Default +
+                    CoroutineExceptionHandler { _, e -> Log.e(TAG, "uncaught in controller scope", e) }
+            )
+            val dao = JournalDb.get(app).dao()
+            val transcriber = Transcriber(app)
+            // The store and the controller need each other (the store reads
+            // the engine the controller loads; the controller asks the store
+            // about imports and backfill), so the lambdas go through a holder.
+            var controller: RecordingController? = null
+            val store = JournalStore(app, dao, scope) { controller?.engine }
+            return RecordingController(
+                scope = scope,
+                recorder = AudioRecorder(scope),
+                dao = dao,
+                dir = File(app.filesDir, "recordings"),
+                transcribe = { transcriber.transcribeStrict(it) },
+                loadEngine = {
+                    OnnxEmbeddingEngine(
+                        modelBytes = app.assets.open("models/bge_small_en_v15_q8.onnx").use { it.readBytes() },
+                        vocab = app.assets.open("models/bge_vocab.txt").use { WordPieceTokenizer(it) },
+                    )
+                },
+                host = AndroidHost(app),
+                importInFlight = { store.isImporting },
+                backfill = { store.requestBackfill() },
+            ).also {
+                it.store = store
+                controller = it
+                it.start()
+            }
+        }
+    }
+
+    private class AndroidHost(private val app: Context) : Host {
+        override fun startService() {
+            try {
+                ContextCompat.startForegroundService(app, Intent(app, RecordingService::class.java))
+            } catch (e: Exception) {
+                // Background start refused (ForegroundServiceStartNotAllowedException)
+                // or similar. The work still runs; it just is not protected from
+                // the freezer while the app is in the background.
+                Log.w(TAG, "could not start the foreground service: ${e.message}")
+            }
+        }
+
+        /**
+         * A recovery-only start needs the app in the foreground: Android 12+
+         * refuses to start a foreground service from the background.
+         */
+        override fun canHostRecoveryService(): Boolean {
+            val info = ActivityManager.RunningAppProcessInfo()
+            ActivityManager.getMyMemoryState(info)
+            return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+        }
     }
 }
 

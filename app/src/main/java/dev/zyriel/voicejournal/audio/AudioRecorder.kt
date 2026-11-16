@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import dev.zyriel.voicejournal.pipeline.RecordingController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +30,7 @@ import java.io.IOException
  * the MIC source to VOICE_RECOGNITION, and the disk-error path, are not yet
  * device-verified.
  */
-class AudioRecorder(private val scope: CoroutineScope) {
+class AudioRecorder(private val scope: CoroutineScope) : RecordingController.Capture {
 
     sealed interface State {
         data object Idle : State
@@ -38,10 +39,10 @@ class AudioRecorder(private val scope: CoroutineScope) {
     }
 
     private val _state = MutableStateFlow<State>(State.Idle)
-    val state: StateFlow<State> = _state.asStateFlow()
+    override val state: StateFlow<State> = _state.asStateFlow()
 
     private val _elapsedMs = MutableStateFlow(0L)
-    val elapsedMs: StateFlow<Long> = _elapsedMs.asStateFlow()
+    override val elapsedMs: StateFlow<Long> = _elapsedMs.asStateFlow()
 
     @Volatile private var job: Job? = null
 
@@ -60,7 +61,7 @@ class AudioRecorder(private val scope: CoroutineScope) {
      * unprocessed-for-ASR path (no AGC or noise suppression tuned for calls).
      */
     @SuppressLint("MissingPermission") // permission is checked by the caller (UI layer)
-    fun start(outFile: File): Boolean {
+    override fun start(outFile: File): Boolean {
         if (_state.value is State.Recording) return false
         _state.value = State.Idle
 
@@ -153,7 +154,7 @@ class AudioRecorder(private val scope: CoroutineScope) {
      * finished, guaranteeing the WAV header is finalized on disk. Use this
      * before handing the file to the transcriber; plain [stop] races it.
      */
-    suspend fun stopAndWait() {
+    override suspend fun stopAndWait() {
         job?.cancelAndJoin()
         job = null
     }

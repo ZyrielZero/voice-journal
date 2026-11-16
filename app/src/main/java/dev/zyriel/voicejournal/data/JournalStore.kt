@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.StatFs
 import android.util.Log
 import androidx.room.withTransaction
+import dev.zyriel.voicejournal.search.EmbeddingEngine
 import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -13,11 +14,23 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.BufferedInputStream
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Import progress and result for the UI. [inFlight] gates dismissal. */
-data class ImportStatus(val message: String, val inFlight: Boolean)
+/**
+ * Import progress and result for the UI. [inFlight] gates dismissal.
+ * [passwordFor] is set when the archive at that Uri is encrypted and needs
+ * a password (first ask, or after a wrong one): the UI collects it and
+ * calls [JournalStore.import] again with it.
+ */
+data class ImportStatus(
+    val message: String,
+    val inFlight: Boolean,
+    val passwordFor: Uri? = null,
+    /** True when [passwordFor] follows a password that did not open the file. */
+    val wrongPassword: Boolean = false,
+)
 
 /**
  * Process-lived owner of every journal write that must survive the UI:
@@ -41,7 +54,7 @@ class JournalStore(
     app: Context,
     private val dao: JournalDao,
     private val scope: CoroutineScope,
-    private val engine: () -> OnnxEmbeddingEngine?,
+    private val engine: () -> EmbeddingEngine?,
 ) {
     private val context = app.applicationContext
     private val db = JournalDb.get(context)
@@ -111,9 +124,13 @@ class JournalStore(
     /**
      * Single-flight import on [scope]; a second call while one runs leaves
      * the running import alone and reports busy. Progress and result are
-     * reported via [importStatus].
+     * reported via [importStatus]. An encrypted archive with no (or the
+     * wrong) [password] ends with [ImportStatus.passwordFor] set instead
+     * of an error; nothing has been imported at that point, because the
+     * archive's first frame is authenticated before any of it is read.
+     * The array is wiped when the import ends.
      */
-    fun import(uri: Uri) {
+    fun import(uri: Uri, password: CharArray? = null) {
         if (!importRunning.compareAndSet(false, true)) {
             _importStatus.value = ImportStatus(BUSY_MESSAGE, inFlight = true)
             return
@@ -121,7 +138,7 @@ class JournalStore(
         _importStatus.value = ImportStatus("Importing...", inFlight = true)
         val job = scope.launch(Dispatchers.IO) {
             try {
-                val result = runImport(uri)
+                val result = runImport(uri, password)
                 if (result.added > 0) requestBackfill()
                 finish(when {
                     result.total == 0 -> "Archive was empty."
@@ -131,8 +148,16 @@ class JournalStore(
             } catch (e: CancellationException) {
                 finish("Import cancelled.")
                 throw e
+            } catch (e: ArchiveCrypto.PasswordRequiredException) {
+                _importStatus.value = ImportStatus(e.message.orEmpty(), inFlight = false, passwordFor = uri)
+            } catch (e: ArchiveCrypto.WrongPasswordException) {
+                _importStatus.value = ImportStatus(
+                    e.message.orEmpty(), inFlight = false, passwordFor = uri, wrongPassword = true,
+                )
             } catch (e: Exception) {
                 finish("Import failed: ${e.message}")
+            } finally {
+                password?.fill('\u0000')
             }
         }
         // invokeOnCompletion, not finally: it also runs when the scope was
@@ -149,7 +174,7 @@ class JournalStore(
         _importStatus.value = ImportStatus(message, inFlight = false)
     }
 
-    private suspend fun runImport(uri: Uri): JournalImporter.Result {
+    private suspend fun runImport(uri: Uri, password: CharArray?): JournalImporter.Result {
         // Only one import runs per process (importRunning), so every other
         // run directory is a leftover from a process that died mid-import.
         val runDir = File(stagingRoot, "run-${System.currentTimeMillis()}")
@@ -160,7 +185,13 @@ class JournalStore(
             freeBytes = { StatFs(runDir.path).availableBytes },
         )
         val existing = dao.allOnce().map { it.timestampMs to it.transcript }.toHashSet()
-        return context.contentResolver.openInputStream(uri)?.use { inp ->
+        return context.contentResolver.openInputStream(uri)?.use { raw ->
+            val buffered = BufferedInputStream(raw)
+            val inp = when {
+                !ArchiveCrypto.isEncrypted(buffered) -> buffered
+                password == null || password.isEmpty() -> throw ArchiveCrypto.PasswordRequiredException()
+                else -> ArchiveCrypto.decrypting(buffered, password)
+            }
             importer.import(inp, existing) { e ->
                 dao.insert(JournalEntry(
                     transcript = e.transcript,

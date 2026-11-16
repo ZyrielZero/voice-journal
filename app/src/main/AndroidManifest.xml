@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Launch recovery transcribes an already-recorded file with the mic
+         off, so it runs under a file-processing type instead of borrowing
+         the microphone one: mediaProcessing on Android 15+, dataSync below. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -50,12 +55,14 @@
             tools:node="remove" />
 
         <!-- Keeps recording and transcription alive with the screen off.
-             microphone is a while-in-use type: this service must only ever be
-             started while the app is visible (the Rec tap), never from the
-             background. -->
+             microphone is a while-in-use type: a recording start must only
+             ever happen while the app is visible (the Rec tap), never from
+             the background. The other two types cover launch recovery,
+             where no microphone is in use; the service passes exactly one
+             type to startForeground, chosen by what it is doing. -->
         <service
             android:name=".pipeline.RecordingService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|mediaProcessing|dataSync" />
     </application>
 </manifest>

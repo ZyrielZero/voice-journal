@@ -97,6 +97,11 @@ android {
 
     androidResources { noCompress += "bin" }
 
+    // JVM unit tests drive real pipeline code (RecordingController) that
+    // logs through android.util.Log. The stub android.jar throws on every
+    // call by default; returning defaults makes Log a no-op there.
+    testOptions { unitTests.isReturnDefaultValues = true }
+
     // The About screen renders the license texts from assets. They are
     // copied from the repo-root originals at build time so there is one
     // source of truth; nothing is hand-duplicated into assets.

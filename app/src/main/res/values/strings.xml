@@ -1,4 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Voice Journal</string>
+
+    <!-- Common actions -->
+    <string name="action_close">Close</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_dismiss">Dismiss</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_save">Save</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_keep">Keep</string>
+    <string name="action_more">More</string>
+    <string name="action_play">Play</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_record">Rec</string>
+
+    <!-- App lock -->
+    <string name="lock_title">Voice Journal is locked</string>
+    <string name="lock_body">Recording and transcription keep running while locked.</string>
+    <string name="lock_unlock">Unlock</string>
+    <string name="lock_prompt_title">Unlock Voice Journal</string>
+    <string name="lock_prompt_subtitle">Your entries stay hidden until you confirm it\'s you.</string>
+
+    <!-- Journal screen -->
+    <string name="theme_auto">Auto</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="search_placeholder">Search entries</string>
+    <string name="status_recording">Recording  %1$s</string>
+    <string name="status_transcribing">Transcribing on-device…</string>
+    <string name="status_recovering">Recovering an earlier entry…</string>
+    <string name="empty_journal">Quiet in here. Record your first entry.</string>
+    <string name="empty_search">Nothing matches \"%1$s\".</string>
+
+    <!-- Recordings that could not be transcribed -->
+    <plurals name="quarantine_notice">
+        <item quantity="one">%1$d recording could not be transcribed. Its audio is kept on this device.</item>
+        <item quantity="other">%1$d recordings could not be transcribed. Their audio is kept on this device.</item>
+    </plurals>
+    <string name="quarantine_delete_title">Delete this audio?</string>
+    <plurals name="quarantine_delete_body">
+        <item quantity="one">The recording was never transcribed, so deleting it removes the only copy. This cannot be undone. An export made first would include it.</item>
+        <item quantity="other">These %1$d recordings were never transcribed, so deleting them removes the only copies. This cannot be undone. An export made first would include them.</item>
+    </plurals>
+    <string name="quarantined_transcript">(recording could not be transcribed)</string>
+
+    <!-- Overflow menu -->
+    <string name="menu_export">Export journal</string>
+    <string name="menu_import">Import journal</string>
+    <string name="menu_lock_off">App lock: off</string>
+    <string name="menu_lock_on">App lock: on</string>
+    <string name="menu_lock_unavailable">App lock: on (needs a screen lock)</string>
+    <string name="menu_hide_on">Hide in recents: on</string>
+    <string name="menu_hide_off">Hide in recents: off</string>
+    <string name="menu_about">About</string>
+
+    <!-- Export -->
+    <string name="export_title">Export journal</string>
+    <string name="export_body">The export holds your audio recordings and transcripts. Set a password to encrypt it; without one, anyone who gets the file can read and play them.</string>
+    <string name="export_password">Password (optional)</string>
+    <string name="export_password_confirm">Repeat password</string>
+    <string name="export_password_mismatch">The passwords do not match.</string>
+    <string name="export_password_warning">There is no way to recover a forgotten password. Without it this export cannot be opened.</string>
+    <string name="export_action_encrypted">Export encrypted</string>
+    <string name="export_action_plain">Export unencrypted</string>
+    <string name="export_in_progress">Exporting…</string>
+    <string name="export_failed">Export failed: %1$s</string>
+    <string name="export_password_lost">Nothing was exported: the app was restarted while the file picker was open, and the password was not kept. Please export again.</string>
+    <plurals name="export_done">
+        <item quantity="one">Exported %1$d entry.</item>
+        <item quantity="other">Exported %1$d entries.</item>
+    </plurals>
+    <plurals name="export_done_encrypted">
+        <item quantity="one">Exported %1$d entry, encrypted.</item>
+        <item quantity="other">Exported %1$d entries, encrypted.</item>
+    </plurals>
+
+    <!-- Import -->
+    <string name="transfer_title">Journal transfer</string>
+    <string name="import_password_title">Password needed</string>
+    <string name="import_password_body">This export is encrypted. Enter the password it was exported with.</string>
+    <string name="import_password_wrong">That password did not open the file. Try again.</string>
+    <string name="import_password_field">Password</string>
+    <string name="import_action">Import</string>
+
+    <!-- Entry dialog -->
+    <string name="entry_save_hint">Saving updates this entry\'s search index too.</string>
+    <string name="entry_delete_title">Delete this entry?</string>
+    <string name="entry_delete_body">The transcript and its recording are removed from this device. This cannot be undone.</string>
+    <string name="entry_discard_title">Discard your changes?</string>
+    <string name="entry_discard_body">Your edits to this transcript have not been saved.</string>
+    <string name="entry_discard">Discard</string>
+    <string name="entry_keep_editing">Keep editing</string>
+
+    <!-- Recording notification -->
+    <string name="notif_channel_name">Recording</string>
+    <string name="notif_channel_description">Shown while a journal entry is being recorded or transcribed</string>
+    <string name="notif_recording">Recording journal entry</string>
+    <string name="notif_transcribing">Transcribing…</string>
+    <string name="notif_recovering">Recovering an unsaved entry…</string>
 </resources>
