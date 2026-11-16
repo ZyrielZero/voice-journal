@@ -189,9 +189,44 @@ object OrphanSweep {
         return Report(recovered, deleted, skipped, failed, quarantined, aborted)
     }
 
-    /** WAVs currently held in `quarantine/` under [dir]. */
-    fun quarantinedCount(dir: File): Int =
-        File(dir, QUARANTINE_DIR).listFiles()?.count { it.isFile && it.extension == "wav" } ?: 0
+    /** WAVs currently held in `quarantine/` under [dir], oldest name first. */
+    fun quarantinedFiles(dir: File): List<File> =
+        File(dir, QUARANTINE_DIR).listFiles()
+            ?.filter { it.isFile && it.extension == "wav" }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+
+    fun quarantinedCount(dir: File): Int = quarantinedFiles(dir).size
+
+    /**
+     * Moves every quarantined WAV back into [dir] with a clean failure
+     * count, so the next [sweep] treats it as a fresh orphan and gets
+     * [MAX_ATTEMPTS] more tries. Used when the user asks to retry: what
+     * failed may have been fixed since (an app update, a freed-up device).
+     * A name already taken in [dir] gets a numeric prefix. Returns how many
+     * files were moved; one that cannot be moved stays in quarantine.
+     */
+    fun releaseQuarantine(dir: File): Int {
+        var moved = 0
+        for (q in quarantinedFiles(dir)) {
+            var dest = File(dir, q.name)
+            var i = 1
+            while (dest.exists()) dest = File(dir, "${i++}_${q.name}")
+            // A stale count beside the destination would send the file
+            // straight back without a single attempt.
+            sidecar(dest, FAILURE_SIDECAR).delete()
+            if (q.renameTo(dest)) moved++
+        }
+        return moved
+    }
+
+    /**
+     * Deletes every quarantined WAV. Only ever called on an explicit,
+     * confirmed user action: quarantine exists so that nothing else does
+     * this. Returns how many files were deleted.
+     */
+    fun deleteQuarantine(dir: File): Int =
+        quarantinedFiles(dir).count { it.delete() }
 
     private fun canonical(f: File): String =
         try { f.canonicalPath } catch (e: IOException) { f.absolutePath }
