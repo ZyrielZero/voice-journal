@@ -5,14 +5,15 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.zyriel.voicejournal.BuildConfig
+import dev.zyriel.voicejournal.R
 import dev.zyriel.voicejournal.audio.AudioPlayer
+import dev.zyriel.voicejournal.data.ArchiveCrypto
 import dev.zyriel.voicejournal.data.JournalArchive
 import dev.zyriel.voicejournal.data.JournalDb
 import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.data.openOutputStreamTruncating
 import dev.zyriel.voicejournal.pipeline.RecordingController
-import dev.zyriel.voicejournal.search.KeywordSearch
-import dev.zyriel.voicejournal.search.VectorSearch
+import dev.zyriel.voicejournal.search.HybridSearch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -51,6 +52,13 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
 
     /** True while the launch sweep transcribes audio from an earlier session. */
     val recovering: StateFlow<Boolean> = controller.recovering
+
+    /** Recordings set aside after repeated failed transcriptions. */
+    val quarantined: StateFlow<Int> = controller.quarantined
+
+    fun retryQuarantined() = controller.retryQuarantined()
+
+    fun deleteQuarantined() = controller.deleteQuarantined()
     val recorder = controller.recorder
     val player = AudioPlayer()
 
@@ -58,7 +66,8 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
     val query: StateFlow<String> = _query.asStateFlow()
 
     /**
-     * Entries, filtered by semantic search when a query is active. Typing is
+     * Entries, filtered by [HybridSearch] (meaning plus words) when a query
+     * is active; an empty result is a real "nothing matches". Typing is
      * debounced (clearing the box is not) because each embed holds the
      * engine mutex around a blocking session.run, and the ranking runs on
      * Default so a Room emission during a query never scores on Main.
@@ -72,9 +81,9 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
                 when {
                     q.isBlank() -> all
                     else -> {
+                        // Null vector (engine unavailable) means keywords only.
                         val qVec = controller.engine?.embedQuery(q)
-                        if (qVec != null) VectorSearch.topK(qVec, all, k = 20).map { it.first }
-                        else KeywordSearch.rank(q, all, k = 20).map { it.first }
+                        HybridSearch.rank(q, qVec, all, k = 20).map { it.entry }
                     }
                 }
             }
@@ -116,8 +125,17 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Export / import ----
 
-    /** Transfer progress/result for the UI. [inFlight] gates dismissal. */
-    data class TransferStatus(val message: String, val inFlight: Boolean)
+    /**
+     * Transfer progress/result for the UI. [inFlight] gates dismissal.
+     * [passwordFor] asks the UI for the password of the encrypted archive
+     * at that Uri; [wrongPassword] says the last one did not open it.
+     */
+    data class TransferStatus(
+        val message: String,
+        val inFlight: Boolean,
+        val passwordFor: Uri? = null,
+        val wrongPassword: Boolean = false,
+    )
 
     private val _exportStatus = MutableStateFlow<TransferStatus?>(null)
 
@@ -130,7 +148,7 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
      */
     val transferStatus: StateFlow<TransferStatus?> =
         combine(_exportStatus, store.importStatus) { export, import ->
-            export ?: import?.let { TransferStatus(it.message, it.inFlight) }
+            export ?: import?.let { TransferStatus(it.message, it.inFlight, it.passwordFor, it.wrongPassword) }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     fun dismissTransferStatus() {
@@ -145,21 +163,54 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
         _exportStatus.value = TransferStatus(message, inFlight = false)
     }
 
+    private fun str(id: Int, vararg args: Any): String = getApplication<Application>().getString(id, *args)
+
     /**
-     * Writes the whole journal to [uri] (from ACTION_CREATE_DOCUMENT).
-     * Runs on viewModelScope: transfers are user-initiated with the screen
-     * open, and unlike recording there is no OS resource to keep legal.
-     * The destination is opened in truncating mode so overwriting a larger
-     * file cannot leave its tail behind. Known limitation: backgrounding
-     * mid-export abandons a partial zip at the destination; SAF gives no
-     * atomic write to fix that from here.
+     * The password for the export the user is about to pick a destination
+     * for. Held here, not in saved UI state: a ViewModel survives rotation
+     * while the system file picker is open, and a password must never be
+     * written into a saved-instance bundle. It does not survive process
+     * death; [exportTo] then refuses instead of exporting unencrypted.
      */
-    fun exportTo(uri: Uri) {
+    private var pendingExportPassword: CharArray? = null
+
+    /** Sets (or with null clears) the password for the next [exportTo]. */
+    fun setExportPassword(password: CharArray?) {
+        pendingExportPassword?.fill('\u0000')
+        pendingExportPassword = password
+    }
+
+    /**
+     * Writes the whole journal to [uri] (from ACTION_CREATE_DOCUMENT),
+     * encrypted with the pending password when [encrypted] is true.
+     * Recordings held in quarantine have no entry yet; they are exported
+     * as entries with a placeholder transcript so their audio is not left
+     * behind. Runs on viewModelScope: transfers are user-initiated with the
+     * screen open, and unlike recording there is no OS resource to keep
+     * legal. The destination is opened in truncating mode so overwriting a
+     * larger file cannot leave its tail behind. Known limitation:
+     * backgrounding mid-export abandons a partial file at the destination;
+     * SAF gives no atomic write to fix that from here.
+     */
+    fun exportTo(uri: Uri, encrypted: Boolean) {
+        val password = pendingExportPassword
+        pendingExportPassword = null
+        if (encrypted && password == null) {
+            // The process was restarted behind the file picker. Writing the
+            // journal in the clear here would be the opposite of what was asked.
+            done(str(R.string.export_password_lost))
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
-            _exportStatus.value = TransferStatus("Exporting...", inFlight = true)
+            _exportStatus.value = TransferStatus(str(R.string.export_in_progress), inFlight = true)
             try {
-                val all = dao.allOnce().sortedByDescending { it.timestampMs }
-                getApplication<Application>().contentResolver.openOutputStreamTruncating(uri)?.use { out ->
+                val placeholder = str(R.string.quarantined_transcript)
+                val unsaved = controller.quarantinedFiles().map { f ->
+                    JournalEntry(transcript = placeholder, timestampMs = f.lastModified(), audioPath = f.absolutePath)
+                }
+                val all = (dao.allOnce() + unsaved).sortedByDescending { it.timestampMs }
+                getApplication<Application>().contentResolver.openOutputStreamTruncating(uri)?.use { raw ->
+                    val out = if (password != null) ArchiveCrypto.encrypting(raw, password) else raw
                     JournalArchive.export(
                         entries = all,
                         resolveAudio = { File(it.audioPath).takeIf { f -> f.isFile } },
@@ -167,11 +218,18 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
                         appVersion = BuildConfig.VERSION_NAME,
                     )
                 } ?: error("could not open destination")
-                done("Exported ${all.size} ${if (all.size == 1) "entry" else "entries"}.")
+                done(
+                    getApplication<Application>().resources.getQuantityString(
+                        if (password != null) R.plurals.export_done_encrypted else R.plurals.export_done,
+                        all.size, all.size,
+                    )
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                done("Export failed: ${e.message}")
+                done(str(R.string.export_failed, e.message.orEmpty()))
+            } finally {
+                password?.fill('\u0000')
             }
         }
     }
@@ -182,13 +240,15 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
      * insert and duplicate rules live in JournalImporter) and reports
      * through [transferStatus]; a second request while one runs gets a
      * busy message instead of a parallel import. The store also requests
-     * the embedding backfill for the new rows.
+     * the embedding backfill for the new rows. An encrypted archive comes
+     * back as [TransferStatus.passwordFor]; call again with the password.
      */
-    fun importFrom(uri: Uri) {
-        store.import(uri)
+    fun importFrom(uri: Uri, password: CharArray? = null) {
+        store.import(uri, password)
     }
 
     override fun onCleared() {
+        setExportPassword(null)
         // The recorder, transcriber, and engine belong to the controller and
         // keep running; only playback is screen-bound.
         player.stop()
