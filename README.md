@@ -1,6 +1,6 @@
 # Voice Journal
 
-A fully offline voice journal for Android. Record your thoughts, get them transcribed on-device, and search them by meaning, not just keywords. Nothing ever leaves your phone — but nothing is trapped there either: export the whole journal (audio and transcripts) to a zip anywhere you choose, and import it back later, so your journal survives an uninstall or a new phone.
+A fully offline voice journal for Android. Record your thoughts, get them transcribed on-device, and search them by meaning, not just keywords. Nothing ever leaves your phone — but nothing is trapped there either: export the whole journal (audio and transcripts) to a file anywhere you choose, optionally encrypted with a password, and import it back later, so your journal survives an uninstall or a new phone.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Voice Journal home screen" width="300">
@@ -10,10 +10,25 @@ A fully offline voice journal for Android. Record your thoughts, get them transc
 
 A journal is one of the most private things a person owns. This app has **no INTERNET permission**. Not "we don't upload your data," but "the OS will not let this app touch the network." Check for yourself:
 
-- Source: [`AndroidManifest.xml`](app/src/main/AndroidManifest.xml) declares `RECORD_AUDIO` plus local-only plumbing (foreground service, wakelock, notifications) so recording survives the screen turning off. No network permission of any kind
+- Source: [`AndroidManifest.xml`](app/src/main/AndroidManifest.xml) declares `RECORD_AUDIO` plus local-only plumbing (foreground service types, wakelock, notifications) so recording survives the screen turning off and an interrupted entry can be recovered. No network permission of any kind
 - Built APK: `aapt dump permissions <apk>` shows the same
+- Enforced, not just declared: a library's manifest can add permissions behind the app's back (ONNX Runtime's does, along with a telemetry initializer). Those entries are stripped in the manifest, the Gradle build fails if the merged manifest contains a network permission (`verifyNoNetwork` in [`app/build.gradle.kts`](app/build.gradle.kts)), and CI checks the built APK again
 
-Transcription runs locally through [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (base.en, q5_1). Semantic search runs locally through [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (int8 ONNX). Your recordings, transcripts, and embeddings live in app-private storage; the export/import feature copies a zip to a location you pick, and only when you ask it to.
+Transcription runs locally through [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (base.en, q5_1). Semantic search runs locally through [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (int8 ONNX). Your recordings, transcripts, and embeddings live in app-private storage; the export/import feature copies a file to a location you pick, and only when you ask it to.
+
+What protects the journal, precisely:
+
+- **On the device:** Android's app sandbox and the device's own storage encryption. The app lock (biometric or screen-lock credential) and screenshot blocking keep someone holding the unlocked phone out; they are a screen gate, not encryption.
+- **In an export:** nothing, unless you set a password. With one, the file is sealed with AES-256-GCM under a key derived from the password (PBKDF2-HMAC-SHA256, 600,000 iterations); the format is described in [`ArchiveCrypto.kt`](app/src/main/java/dev/zyriel/voicejournal/data/ArchiveCrypto.kt). There is no recovery for a forgotten password.
+
+## Search
+
+The search box combines two signals ([`Search.kt`](app/src/main/java/dev/zyriel/voicejournal/search/Search.kt)):
+
+- **Meaning.** Each entry is embedded on-device; a query matches entries whose similarity clears a floor and sits close to the best match, both measured against the bundled model ([`SearchCalibrationTest`](app/src/test/java/dev/zyriel/voicejournal/search/SearchCalibrationTest.kt)). A query about something you never said usually returns nothing, instead of the twenty least-unrelated entries. This is a trim, not a guarantee: the model's similarity scores for related and unrelated text overlap, so a loosely related entry can still appear behind the real matches.
+- **Words.** An entry that contains a query word is always a result and gets a ranking boost, which is what finds names and other exact terms the model has no feel for. It is also how an entry is found before its embedding exists (just imported, just edited).
+
+Entries longer than the model's 256-token window are embedded as overlapping windows, so the end of a ten-minute entry is as searchable as its first minute.
 
 ## Performance
 
@@ -72,7 +87,7 @@ Release builds use exactly the toolchain pinned in the repo: AGP 9.2.1, Gradle 9
 
 ## Stack
 
-Kotlin, Jetpack Compose, Room. Native transcription via whisper.cpp over JNI (arm64). Embeddings via ONNX Runtime. JVM unit tests, including real ONNX inference against the bundled model.
+Kotlin, Jetpack Compose, Room. Native transcription via whisper.cpp over JNI (arm64); the vendored copy is trimmed to what the build uses, see [`VENDORED.md`](app/src/main/cpp/VENDORED.md). Embeddings via ONNX Runtime. JVM unit tests cover the recording state machine against fakes, the archive and its encryption, crash recovery, and real ONNX inference against the bundled model.
 
 ## License
 

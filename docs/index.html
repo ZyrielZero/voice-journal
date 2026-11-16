@@ -61,9 +61,23 @@
     happens only when you start it, and the file goes only to the location
     you pick in the Android file picker, such as a folder on the device or a
     cloud-storage app you have installed. From that point the copy is
-    governed by wherever you saved it, not by this app. Import reads a zip
+    governed by wherever you saved it, not by this app. Import reads a file
     you choose in the same way. The app itself never sends the file
     anywhere.
+  </p>
+  <p>
+    You can set a password when you export. The file is then encrypted on
+    the device (AES-256-GCM, with the key derived from your password) before
+    it is written, and can only be opened with that password. The password
+    is never stored; if you forget it, the export cannot be recovered.
+    Without a password the export is an ordinary, unencrypted zip, and
+    anyone who gets the file can read and play it.
+  </p>
+  <p>
+    The app lock and "hide in recents" settings keep other people who are
+    holding your unlocked phone out of the journal. They do not encrypt the
+    journal on the device; there it is protected by Android's app sandbox
+    and the device's own storage encryption.
   </p>
 
   <h2>Permissions</h2>
@@ -75,10 +89,19 @@
     <li><code>RECORD_AUDIO</code>: to record the entries you choose to record.</li>
     <li><code>FOREGROUND_SERVICE</code> and <code>FOREGROUND_SERVICE_MICROPHONE</code>:
       so a recording keeps running with the screen off.</li>
+    <li><code>FOREGROUND_SERVICE_MEDIA_PROCESSING</code> and
+      <code>FOREGROUND_SERVICE_DATA_SYNC</code>: so that a recording
+      interrupted by a crash can finish being transcribed, on the device,
+      the next time you open the app. Despite the second name, nothing is
+      synchronised anywhere: it is the type Android assigns to local file
+      processing on versions before Android 15.</li>
     <li><code>POST_NOTIFICATIONS</code>: to show the notification Android requires
       while recording is in progress.</li>
     <li><code>WAKE_LOCK</code>: to keep the processor awake long enough to finish
       recording and transcribing.</li>
+    <li><code>USE_BIOMETRIC</code> (and <code>USE_FINGERPRINT</code> on older
+      Android versions): for the optional app lock. The check is done by
+      Android; the app never sees your fingerprint, face or PIN.</li>
   </ul>
   <p>
     None of these permissions allow network access.

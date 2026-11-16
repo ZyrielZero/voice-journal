@@ -1,11 +1,13 @@
 # Project status
 
-Updated for **v1.0.0** (July 2026). The benchmark numbers below were measured on the
-0.4.1 build `ce5f560` and have not been re-run on 1.0.0.
+Updated for **v1.1.0** (prepared, not yet tagged). The benchmark numbers below were
+measured on the 0.4.1 build `ce5f560` and have not been re-run since; they predate the
+dotprod native build, non-speech-token suppression and the VOICE_RECOGNITION mic source.
 
 ## Where things stand
 
 - **1.0.0 shipped.** First tagged release; signed APK attached to the GitHub Release.
+- **1.1.0 is code-complete but not device-verified.** See "Before tagging 1.1.0" below.
 - **Model and VAD decisions** were made from committed on-device numbers:
   [`vj-accuracy-ce5f560.json`](benchmarks/vj-accuracy-ce5f560.json) and
   [`vj-benchmark-ce5f560.json`](benchmarks/vj-benchmark-ce5f560.json), measured on a Pixel 10 Pro XL.
@@ -24,6 +26,37 @@ Updated for **v1.0.0** (July 2026). The benchmark numbers below were measured on
   - `ce5f560` added a loud guard so an accuracy run can never silently fall back to
     no-VAD when the silero model asset is missing.
 - **Toolchain:** AGP 9.2.1 / Gradle 9.6 / Kotlin 2.2.10 migration is merged (`78d8ebf`).
+
+## Before tagging 1.1.0
+
+Everything in this list is covered by JVM unit tests where it can be, and none of it has
+run on a phone. Each item is a few minutes on a device:
+
+1. **Phone call mid-recording** (audio-focus stop): the entry up to the call is saved.
+2. **Kill mid-transcription, relaunch** (recovery service): "Recovering an earlier
+   entry…" shows, the entry appears, and `adb shell dumpsys activity services
+   dev.zyriel.voicejournal` shows the service with type `mediaProcessing` (Android 15+)
+   or `dataSync`, not `microphone`. Repeat with the microphone permission revoked.
+3. **Rec tapped during recovery:** the service re-enters the foreground as `microphone`
+   and the recording survives the screen turning off.
+4. **Full disk during recording** (capture-error salvage): the partial entry is saved.
+5. **Stop from the notification with the app backgrounded**, then let it transcribe.
+6. **Quarantine:** make transcription fail three launches in a row (for example by
+   pushing a corrupt `ggml-base.en-q5_1.bin` into `files/`), check the notice appears
+   with Retry and Delete, restore the model, tap Retry.
+7. **Encrypted export and import** round trip through a real document provider (Files,
+   Drive), including a wrong password and a rotation while the file picker is open.
+8. **Accuracy suite** with non-speech-token suppression on, and the **benchmark** on
+   the dotprod build (`whisper_lib` in the JSON says which library loaded); refresh the
+   README table from both.
+9. **ONNX Runtime without its telemetry hook:** 1.31.0's manifest asks for INTERNET and
+   registers `ai.onnxruntime.TelemetryInitializer`; both are stripped from the merged
+   manifest. Confirm on a device that embedding and search still work (they do on the
+   JVM) and that logcat shows no crash or retry loop from the library at startup.
+10. **Search floor:** the similarity floor and margin (`HybridSearch.SEMANTIC_FLOOR`,
+   `SEMANTIC_MARGIN`) are calibrated on a twelve-entry fixture (`SearchCalibrationTest`),
+   which is a small sample. Try them on a real journal; if real queries come back empty
+   too often, lower the floor and re-run that test.
 
 ## Closed incident: "Acc suite hangs on device"
 
