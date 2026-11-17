@@ -76,6 +76,10 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
+      # Lint errors fail the build; warnings are reported only.
+      - name: Lint
+        run: ./gradlew lintDebug --stacktrace
+
       # Builds unsigned (no keystore.properties in CI) with R8 enabled. This
       # proves keep rules and the native -O3 build compile and shrink cleanly
       # on every push, and produces the APK and the AAB Play needs so a CI

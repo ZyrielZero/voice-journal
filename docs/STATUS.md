@@ -1,8 +1,13 @@
 # Project status
 
-Updated for **v1.1.0** (prepared, not yet tagged). The benchmark numbers below were
-measured on the 0.4.1 build `ce5f560` and have not been re-run since; they predate the
-dotprod native build, non-speech-token suppression and the VOICE_RECOGNITION mic source.
+Updated for **v1.1.0** (prepared, not yet tagged). The accuracy suite and the benchmark
+were re-run on 2026-11-17 from commit `cd7b539` on a Pixel 11 Pro XL (Android 17, dotprod
+library): [`vj-accuracy-cd7b539.json`](benchmarks/vj-accuracy-cd7b539.json) and
+[`vj-benchmark-cd7b539.json`](benchmarks/vj-benchmark-cd7b539.json). The README table
+comes from those. Set-wide WER is 4.05% VAD on, 5.41% VAD off; a 60 s clip takes 6.5 s
+with VAD on; embedding a typical entry takes 15 ms and a 5,000-entry search 15 ms.
+The `ce5f560` numbers under "Where things stand" are the 0.4.1 run the model and VAD
+decisions were made from, kept as history.
 
 ## Where things stand
 
@@ -58,9 +63,8 @@ First device run, 2026-11-16, Pixel 11 Pro XL on Android 17 (API 37), debug buil
   the numbers). The VAD now runs on one thread (a local patch, see `VENDORED.md`) and so
   does whisper. With that the suite finishes in about 2.5 minutes, every row's three runs
   agree to within a few percent, and a 60 s clip takes 6.7 s with VAD on. WER on the
-  222-word set: 3.60% VAD on, 5.86% VAD off. These came from an uncommitted tree, so no
-  JSON is committed yet; rerun the suite and the benchmark from the commit and refresh
-  the README from those.
+  222-word set: 3.60% VAD on, 5.86% VAD off. These came from an uncommitted tree; the committed
+  run from `cd7b539` (top of this file) replaces them.
 - **Also found and fixed: speech after a pause was dropped.** The `acc.speech_gaps` rows
   (two clips, each followed by room-tone silence of its own length) lost 64 of 107 words
   with VAD on and 26 with VAD off, where each clip alone loses none. Cause: the bridge
@@ -69,6 +73,8 @@ First device run, 2026-11-16, Pixel 11 Pro XL on Android 17 (API 37), debug buil
   WER; VAD off: 21 hallucinated words in the trailing silence, which is what VAD is on
   by default to prevent). Speed is unchanged; set-wide WER is 4.05% VAD on, 5.41% off.
   Still worth one real recording with a ten-second pause in the middle.
+- **Item 8 is done** (2026-11-17, from `cd7b539`): both suites ran to completion, the
+  JSON reports `whisper_lib: whisperjni` (the dotprod build), and the README is refreshed.
 - Items 1, 3, 4, 5, 7, 10 and the by-hand confirmations in 2, 6 and 9 are still open.
 
 1. **Phone call mid-recording** (audio-focus stop): the entry up to the call is saved.
@@ -94,9 +100,21 @@ First device run, 2026-11-16, Pixel 11 Pro XL on Android 17 (API 37), debug buil
    manifest. Confirm on a device that embedding and search still work (they do on the
    JVM) and that logcat shows no crash or retry loop from the library at startup.
 10. **Search floor:** the similarity floor and margin (`HybridSearch.SEMANTIC_FLOOR`,
-   `SEMANTIC_MARGIN`) are calibrated on a twelve-entry fixture (`SearchCalibrationTest`),
-   which is a small sample. Try them on a real journal; if real queries come back empty
-   too often, lower the floor and re-run that test.
+   `SEMANTIC_MARGIN`, `SEMANTIC_STRONG`) are calibrated on two small fixtures
+   (`SearchCalibrationTest`, twelve entries; `ConceptSearchTest`, 36), which is a small
+   sample. Try them on a real journal; if real queries come back empty too often, lower
+   the floor and re-run those tests.
+11. **gte-base embedding model (replaces bge-small).** Run on the Pixel 11 Pro XL,
+   2026-11-17, debug build from an uncommitted tree: the 110 MB model loads through a
+   memory mapping of the APK asset (`ModelAssets.map`) in about 0.4 s with the Java heap
+   at 15 MB (305 MB total PSS, 153 MB of it native); the existing 54-entry journal was
+   re-embedded by the backfill in 2.2 s, about 40 ms an entry at an average of 560
+   characters, and every row's `embeddingModel` is now `gte-base-q8+chunk1`. That run
+   also found that the backfill had never worked on a device: its vector write bound a
+   FloatArray in a Room `@Query`, which Room expands into one placeholder per float, so
+   every write failed with a syntax error (fixed; see `JournalDao`). The embed and search rows were timed on the phone from `cd7b539` (15 ms each).
+   Still open: nobody has yet typed real queries into the search box on a real journal
+   (item 10).
 
 ## Closed incident: "Acc suite hangs on device"
 

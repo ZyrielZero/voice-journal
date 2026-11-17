@@ -42,6 +42,24 @@ set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
+# Reproducible builds: ggml's asserts embed __FILE__, and the debug info the
+# linker hashes into each library's build ID records source, build and NDK
+# paths. Without these maps the same commit built in another directory (CI,
+# F-Droid's build server) gives different .so files, and the builder's home
+# directory ships inside the APK. The maps change strings only, not code.
+get_filename_component(WJ_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
+add_compile_options(
+    "-ffile-prefix-map=${WJ_REPO_ROOT}=."
+    "-ffile-prefix-map=${ANDROID_NDK}=ndk")
+
+# ggml asks git for a commit hash and a "-dirty" suffix and compiles the
+# answer in as GGML_COMMIT. In this repo that is the app's commit, not
+# ggml's, and the dirty check depends on the state of the checkout, so the
+# same source could build two different libraries. An empty GIT_EXE makes
+# ggml skip the lookup and use "unknown"; the vendored version is recorded
+# in VENDORED.md instead.
+set(GIT_EXE "" CACHE FILEPATH "Hidden from ggml on purpose, see above" FORCE)
+
 if (WJ_VARIANT STREQUAL "dotprod")
     # ggml's own set(... CACHE) will not overwrite this. The configure log
     # prints HAVE_DOTPROD and HAVE_FP16_VECTOR_ARITHMETIC; both must be 1.

@@ -2,6 +2,7 @@ package dev.zyriel.voicejournal.search
 
 import dev.zyriel.voicejournal.data.JournalEntry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -200,6 +201,27 @@ class SearchTest {
         assertEquals(listOf(1L), r.map { it.entry.id })
     }
 
+    @Test fun aVectorFromAnotherModelIsIgnoredButItsWordsStillMatch() {
+        val old = JournalEntry(id = 1, transcript = "thesis notes", timestampMs = 1, audioPath = "",
+            embedding = at(0.95f), embeddingModel = "old-model")
+        val current = JournalEntry(id = 2, transcript = "unrelated words", timestampMs = 2, audioPath = "",
+            embedding = at(0.90f), embeddingModel = "new-model")
+        // Meaning only: the old vector scores highest but must not count.
+        assertEquals(listOf(2L), HybridSearch.rank("zzqx", q, listOf(old, current), 20, modelTag = "new-model").map { it.entry.id })
+        // Its words are still searchable.
+        assertTrue(HybridSearch.rank("thesis", q, listOf(old, current), 20, modelTag = "new-model").any { it.entry.id == 1L })
+    }
+
+    @Test fun aSecondStrongMatchSurvivesAMuchBetterFirst() {
+        val entries = listOf(
+            entry(1, "the closest answer", at(0.89f)),
+            entry(2, "also clearly on topic", at(0.81f)),
+            entry(3, "above the floor, not strong, far behind", at(0.77f)),
+        )
+        val r = HybridSearch.rank("zzqx", q, entries, 20, semanticFloor = 0.76f, semanticMargin = 0.05f, semanticStrong = 0.80f)
+        assertEquals(listOf(1L, 2L), r.map { it.entry.id })
+    }
+
     @Test fun resultsAreCappedAtK() {
         val entries = (1..30L).map { entry(it, "thesis note $it", at(0.6f)) }
         assertEquals(20, HybridSearch.rank("thesis", q, entries, 20).size)
@@ -207,5 +229,41 @@ class SearchTest {
 
     @Test fun blankQueryWithoutVectorReturnsNothing() {
         assertTrue(HybridSearch.rank("  ", null, listOf(entry(1, "anything")), 20).isEmpty())
+    }
+
+    @Test fun oneIncidentalWordDoesNotOutrankTheEntryTheQueryIsAbout() {
+        val entries = listOf(
+            entry(1, "something is eating the lettuce", at(0.79f)),
+            entry(2, "made my grandmother's lamb stew tonight", at(0.87f)),
+        )
+        val hits = HybridSearch.rank("something I cooked", at(1f), entries, 20)
+        assertEquals(listOf(2L, 1L), hits.map { it.entry.id })
+    }
+
+    @Test fun aFullWordMatchStillGetsTheFullWeight() {
+        assertEquals(HybridSearch.KEYWORD_WEIGHT, HybridSearch.keywordCredit(1f), 1e-6f)
+        assertEquals(HybridSearch.KEYWORD_WEIGHT * 1.5f, HybridSearch.keywordCredit(1.5f), 1e-6f)
+        assertEquals(HybridSearch.KEYWORD_WEIGHT * 0.25f, HybridSearch.keywordCredit(0.5f), 1e-6f)
+    }
+
+    @Test fun placeholderEntriesAreNeverRelatedByMeaning() {
+        val entries = listOf(
+            entry(1, "(no speech detected)", at(0.85f)),
+            entry(2, "(recording could not be transcribed)", at(0.85f)),
+            entry(3, "[BLANK_AUDIO]", at(0.85f)),
+            entry(4, "two threads were writing to the same cache", at(0.78f)),
+        )
+        assertEquals(listOf(4L), HybridSearch.rank("software", at(1f), entries, 20).map { it.entry.id })
+        // Their words are still searchable.
+        assertEquals(listOf(1L, 4L), HybridSearch.rank("speech", at(1f), entries, 20).map { it.entry.id })
+    }
+
+    @Test fun onlyAWhollyBracketedTranscriptIsAPlaceholder() {
+        assertTrue(HybridSearch.isPlaceholder(" (no speech detected) "))
+        assertTrue(HybridSearch.isPlaceholder("[BLANK_AUDIO]"))
+        assertFalse(HybridSearch.isPlaceholder("(laughs) and then we left"))
+        assertFalse(HybridSearch.isPlaceholder("(one) and (two)"))
+        assertFalse(HybridSearch.isPlaceholder("no brackets"))
+        assertFalse(HybridSearch.isPlaceholder(""))
     }
 }

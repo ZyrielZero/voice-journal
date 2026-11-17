@@ -13,7 +13,8 @@
     <string name="action_more">More</string>
     <string name="action_play">Play</string>
     <string name="action_stop">Stop</string>
-    <string name="action_record">Rec</string>
+    <string name="action_record">Record</string>
+    <string name="action_new_entry">Record an entry</string>
     <string name="action_pause">Pause</string>
     <string name="action_back">Back</string>
     <string name="action_edit">Edit</string>
@@ -24,17 +25,33 @@
     <string name="lock_unlock">Unlock</string>
     <string name="lock_prompt_title">Unlock Voice Journal</string>
     <string name="lock_prompt_subtitle">Your entries stay hidden until you confirm it\'s you.</string>
+    <string name="lock_off_prompt_title">Turn off app lock</string>
+    <string name="lock_off_prompt_subtitle">Confirm it\'s you before the journal opens without asking.</string>
 
     <!-- Journal screen -->
-    <string name="theme_auto">Auto</string>
-    <string name="theme_light">Light</string>
-    <string name="theme_dark">Dark</string>
-    <string name="search_placeholder">Search entries</string>
-    <string name="status_recording">Recording  %1$s</string>
+    <string name="action_settings">Settings</string>
+    <string name="search_placeholder">Search by meaning or words</string>
+    <string name="search_clear">Clear search</string>
+    <plurals name="search_results">
+        <item quantity="one">%1$d entry, closest match</item>
+        <item quantity="other">%1$d entries, closest match first</item>
+    </plurals>
+    <string name="day_today">Today</string>
+    <string name="day_yesterday">Yesterday</string>
+    <!-- Time and length of an entry, e.g. "10:43 AM · 0:19" -->
+    <string name="entry_meta">%1$s  ·  %2$s</string>
+    <string name="entry_open">Open entry</string>
+    <string name="entry_no_speech">No speech found</string>
     <string name="status_transcribing">Transcribing on-device…</string>
     <string name="status_recovering">Recovering an earlier entry…</string>
-    <string name="empty_journal">Quiet in here. Record your first entry.</string>
-    <string name="empty_search">Nothing matches \"%1$s\".</string>
+    <string name="rec_discard">Discard recording</string>
+    <string name="rec_discard_title">Discard this recording?</string>
+    <string name="rec_discard_body">Nothing has been saved yet. The audio recorded so far is deleted.</string>
+    <string name="rec_keep_recording">Keep recording</string>
+    <string name="empty_journal">Quiet in here.</string>
+    <string name="empty_journal_hint">Tap the microphone and speak. Your words are written down on this phone and never leave it.</string>
+    <string name="empty_search">Nothing close to \"%1$s\".</string>
+    <string name="empty_search_hint">Search goes by meaning as well as words. Try describing the moment.</string>
 
     <!-- Recordings that could not be transcribed -->
     <plurals name="quarantine_notice">
@@ -48,15 +65,33 @@
     </plurals>
     <string name="quarantined_transcript">(recording could not be transcribed)</string>
 
-    <!-- Overflow menu -->
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="theme_auto">Auto</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="settings_privacy">Privacy</string>
+    <string name="settings_privacy_note">Recording, transcription and search all happen on this phone. The app has no internet permission.</string>
+    <string name="settings_lock">App lock</string>
+    <string name="settings_lock_body">Ask for your fingerprint, face or screen lock when the journal opens.</string>
+    <string name="settings_lock_unavailable">On, but this phone has no screen lock set up, so the journal opens without asking.</string>
+    <string name="settings_hide">Hide in recents</string>
+    <string name="settings_hide_body">Blank the preview in the app switcher and block screenshots.</string>
+    <string name="settings_journal">Your journal</string>
     <string name="menu_export">Export journal</string>
+    <string name="settings_export_body">Save a copy of every recording and transcript.</string>
     <string name="menu_import">Import journal</string>
-    <string name="menu_lock_off">App lock: off</string>
-    <string name="menu_lock_on">App lock: on</string>
-    <string name="menu_lock_unavailable">App lock: on (needs a screen lock)</string>
-    <string name="menu_hide_on">Hide in recents: on</string>
-    <string name="menu_hide_off">Hide in recents: off</string>
-    <string name="menu_about">About</string>
+    <string name="settings_import_body">Add the entries from an earlier export.</string>
+    <string name="settings_about">About</string>
+    <string name="about_version">Version %1$s (%2$s)</string>
+    <string name="about_copyright">Copyright (C) 2026 ZyrielZero</string>
+    <string name="about_license_notice">Free software under the GNU General Public License v3. You may redistribute and modify it under the terms of that license. It comes with absolutely no warranty.</string>
+    <string name="about_source">Source: github.com/ZyrielZero/voice-journal</string>
+    <string name="about_license">License</string>
+    <string name="about_license_title">GNU General Public License v3</string>
+    <string name="about_notices">Third-party notices</string>
+    <string name="about_loading">Loading…</string>
 
     <!-- Export -->
     <string name="export_title">Export journal</string>
@@ -89,9 +124,12 @@
 
     <!-- Entry screen -->
     <string name="entry_empty">No speech was found in this recording.</string>
-    <string name="playback_position">%1$s / %2$s</string>
+    <string name="entry_editing">Editing</string>
+    <string name="playback_speed_label">Playback speed</string>
+    <!-- Spoken position of the seek bar, e.g. "0:05 of 0:19" -->
+    <string name="playback_position_spoken">%1$s of %2$s</string>
     <string name="playback_speed">%1$s×</string>
-    <string name="entry_save_hint">Saving updates this entry\'s search index too.</string>
+    <string name="entry_save_hint">Search will find this entry by the edited words.</string>
     <string name="entry_delete_title">Delete this entry?</string>
     <string name="entry_delete_body">The transcript and its recording are removed from this device. This cannot be undone.</string>
     <string name="entry_discard_title">Discard your changes?</string>

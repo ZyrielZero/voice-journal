@@ -39,8 +39,9 @@ class Transcriber(private val context: Context) {
          * (4 bytes/sample at 16 kHz = ~3.7 MB/min), so unbounded recordings
          * OOM the pipeline — and worse, the orphan sweep then retries the
          * same OOM on every launch. 15 min = ~58 MB of floats. 30 min
-         * (~115 MB) was too close to the 192 MB default heap once the 33 MB
-         * ONNX model and a second resident clip were counted.
+         * (~115 MB) was too close to the 192 MB default heap once a second
+         * resident clip was counted. (The embedding model no longer counts:
+         * it is mapped from the APK, not held on the heap.)
          */
         const val MAX_CLIP_SECONDS = 15 * 60
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import dev.zyriel.voicejournal.BuildConfig
 import dev.zyriel.voicejournal.audio.WavWriter
+import dev.zyriel.voicejournal.search.ModelAssets
 import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import dev.zyriel.voicejournal.search.VectorSearch
 import dev.zyriel.voicejournal.search.WordPieceTokenizer
@@ -53,8 +54,8 @@ class BenchmarkSuite(private val context: Context) {
         var engine: OnnxEmbeddingEngine? = null
         results += Bench.once("embed.init") {
             engine = OnnxEmbeddingEngine(
-                modelBytes = context.assets.open("models/bge_small_en_v15_q8.onnx").use { it.readBytes() },
-                vocab = context.assets.open("models/bge_vocab.txt").use { WordPieceTokenizer(it) },
+                model = ModelAssets.map(context.assets, "models/gte_base_q8.onnx"),
+                vocab = context.assets.open("models/bert_vocab.txt").use { WordPieceTokenizer(it) },
             )
         }
         val e = engine!!
@@ -79,11 +80,11 @@ class BenchmarkSuite(private val context: Context) {
             onProgress("Search: $n vectors")
             val corpus = List(n) { i ->
                 JournalEntry(id = i.toLong(), transcript = "e$i", timestampMs = 0, audioPath = "",
-                    embedding = FloatArray(384) { rng.nextFloat() - 0.5f })
+                    embedding = FloatArray(OnnxEmbeddingEngine.DIM) { rng.nextFloat() - 0.5f })
             }
-            val q = FloatArray(384) { rng.nextFloat() - 0.5f }
+            val q = FloatArray(OnnxEmbeddingEngine.DIM) { rng.nextFloat() - 0.5f }
             results += Bench.measure("search.top20.n$n", warmups = 2, runs = 5,
-                extra = mapOf("dims" to "384", "k" to "20")) {
+                extra = mapOf("dims" to OnnxEmbeddingEngine.DIM.toString(), "k" to "20")) {
                 VectorSearch.topK(q, corpus, 20)
             }
         }

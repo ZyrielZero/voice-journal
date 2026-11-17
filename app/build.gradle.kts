@@ -21,7 +21,9 @@ plugins {
 
 val sha = runCatching {
     providers.exec {
-        commandLine("git", "rev-parse", "--short", "HEAD")
+        // Fixed length: the default abbreviation grows with the object count
+        // of the clone, and this string is compiled into the APK.
+        commandLine("git", "rev-parse", "--short=7", "HEAD")
     }.standardOutput.asText.get().trim()
 }.getOrDefault("nogit")
 
@@ -106,6 +108,14 @@ android {
 
     androidResources { noCompress += "bin" }
 
+    // AGP otherwise adds a dependency list to the APK signing block,
+    // encrypted with a Google key. Nobody else can read it, F-Droid's
+    // scanner rejects APKs that carry it, and it is of no use to this app.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     // JVM unit tests drive real pipeline code (RecordingController) that
     // logs through android.util.Log. The stub android.jar throws on every
     // call by default; returning defaults makes Log a no-op there.
@@ -120,8 +130,9 @@ kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
 
-// wp4: the 33 MB embedding model is read on every cold start; storing it
-// uncompressed skips inflating it each time, the same as the whisper .bin.
+// wp4: the 110 MB embedding model is memory-mapped out of the APK at every
+// cold start (ModelAssets.map), which only works for an asset stored
+// uncompressed. Do not remove this without changing how the model loads.
 android {
     androidResources { noCompress += "onnx" }
 }
@@ -265,6 +276,13 @@ android {
 }
 dependencies {
     androidTestImplementation("androidx.room:room-testing:2.8.4")
+    // room-testing reads schema JSON with kotlinx-serialization 1.8.1, but
+    // instrumented tests run inside the app, whose own classpath resolves
+    // serialization-core to 1.7.3. The 1.8.1 serializers then fail on the
+    // older interfaces (AbstractMethodError in MigrationTestHelper). Raising
+    // the debug app to 1.8.1 gives both sides the same library; the release
+    // build is untouched.
+    debugImplementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.1")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("junit:junit:4.13.2")
