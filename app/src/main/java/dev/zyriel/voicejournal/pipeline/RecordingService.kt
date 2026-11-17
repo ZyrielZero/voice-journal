@@ -17,7 +17,6 @@ import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.ServiceCompat
 import dev.zyriel.voicejournal.MainActivity
 import dev.zyriel.voicejournal.R
 import kotlinx.coroutines.CoroutineScope
@@ -62,8 +61,8 @@ import kotlinx.coroutines.launch
  *
  * Hardware-verified (Pixel 10 Pro XL): screen-off recording, the Stop
  * notification action, and the notifications-denied fallback all passed the
- * robustness checklist. Audio focus, the recovery phase and its
- * file-processing service types are not yet device-verified.
+ * robustness checklist. Recovery under mediaProcessing passed on a Pixel 11
+ * Pro XL (Android 17). Audio focus is not yet device-verified.
  */
 class RecordingService : Service() {
 
@@ -91,13 +90,18 @@ class RecordingService : Service() {
         // the gap, and Android 12+ refuses a background start; either
         // throws. The pipeline keeps running without the service, so give
         // up on the service, not the work.
+        //
+        // The platform call, not ServiceCompat.startForeground: androidx.core
+        // (1.16.0) masks the type to the ones it knew about in Android 14,
+        // which turns mediaProcessing into "none", and Android 15+ refuses
+        // a typeless start. Seen on a Pixel running Android 17.
         try {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                buildNotification(phaseOf(controller.pipeline.value)),
-                serviceTypeFor(controller.pipeline.value),
-            )
+            val notification = buildNotification(phaseOf(controller.pipeline.value))
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIFICATION_ID, notification, serviceTypeFor(controller.pipeline.value))
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "startForeground refused: ${e.message}")
             stopSelf()
