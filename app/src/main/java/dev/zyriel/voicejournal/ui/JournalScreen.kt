@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -52,6 +53,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.zyriel.voicejournal.BuildConfig
 import dev.zyriel.voicejournal.R
+import dev.zyriel.voicejournal.audio.AudioPlayer
 import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.pipeline.RecordingController.PipelineState
 import dev.zyriel.voicejournal.ui.theme.EmberPulseHigh
@@ -100,6 +102,29 @@ fun JournalScreen(
     // current list, so an entry deleted meanwhile simply closes the dialog.
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showAbout by rememberSaveable { mutableStateOf(false) }
+    // Hoisted above the entry screen so the list comes back where it was.
+    val listState = rememberLazyListState()
+
+    selectedId?.let { id ->
+        // Resolved against the unfiltered list, so a search re-rank cannot
+        // close the entry. Null means Room has not emitted yet (after
+        // process death); an entry missing from a loaded list was deleted.
+        val all = allEntries ?: return@let
+        val entry = all.firstOrNull { it.id == id }
+        if (entry == null) {
+            LaunchedEffect(id) { selectedId = null }
+            return@let
+        }
+        // In place of the journal, not over it: one screen at a time.
+        EntryScreen(
+            entry = entry,
+            player = vm.player,
+            onClose = { selectedId = null },
+            onSave = { text -> vm.updateTranscript(entry, text) },
+            onDelete = { vm.delete(entry); selectedId = null },
+        )
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -193,6 +218,7 @@ fun JournalScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize().padding(bottom = 8.dp)
                 ) {
@@ -216,24 +242,6 @@ fun JournalScreen(
         onDismiss = vm::dismissTransferStatus,
         onPassword = { uri, password -> vm.importFrom(uri, password) },
     )
-
-    selectedId?.let { id ->
-        // Resolved against the unfiltered list, so a search re-rank cannot
-        // close the dialog. Null means Room has not emitted yet (after
-        // process death); an entry missing from a loaded list was deleted.
-        val all = allEntries ?: return@let
-        val entry = all.firstOrNull { it.id == id }
-        if (entry == null) {
-            LaunchedEffect(id) { selectedId = null }
-            return@let
-        }
-        EntryDialog(
-            entry = entry,
-            onDismiss = { selectedId = null },
-            onSave = { text -> vm.updateTranscript(entry, text); selectedId = null },
-            onDelete = { vm.delete(entry); selectedId = null },
-        )
-    }
 }
 
 @Composable
@@ -304,8 +312,12 @@ private fun EntryCard(entry: JournalEntry, isPlaying: Boolean, onPlay: () -> Uni
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Length from the file size alone; blank when there is no recording.
+                val length = remember(entry.audioPath) {
+                    AudioPlayer.wavDurationMs(File(entry.audioPath).length()).takeIf { it > 0L }
+                }
                 Text(
-                    formatDate(entry.timestampMs),
+                    formatDate(entry.timestampMs) + (length?.let { "  ·  " + formatMs(it) } ?: ""),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -322,7 +334,7 @@ private fun EntryCard(entry: JournalEntry, isPlaying: Boolean, onPlay: () -> Uni
     }
 }
 
-private fun formatMs(ms: Long): String {
+internal fun formatMs(ms: Long): String {
     val s = ms / 1000
     return "%d:%02d".format(s / 60, s % 60)
 }

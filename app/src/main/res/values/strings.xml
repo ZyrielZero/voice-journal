@@ -14,6 +14,9 @@
     <string name="action_play">Play</string>
     <string name="action_stop">Stop</string>
     <string name="action_record">Rec</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_back">Back</string>
+    <string name="action_edit">Edit</string>
 
     <!-- App lock -->
     <string name="lock_title">Voice Journal is locked</string>
@@ -84,7 +87,10 @@
     <string name="import_password_field">Password</string>
     <string name="import_action">Import</string>
 
-    <!-- Entry dialog -->
+    <!-- Entry screen -->
+    <string name="entry_empty">No speech was found in this recording.</string>
+    <string name="playback_position">%1$s / %2$s</string>
+    <string name="playback_speed">%1$s×</string>
     <string name="entry_save_hint">Saving updates this entry\'s search index too.</string>
     <string name="entry_delete_title">Delete this entry?</string>
     <string name="entry_delete_body">The transcript and its recording are removed from this device. This cannot be undone.</string>
