@@ -46,13 +46,11 @@ What the reviewers will ask about, and the answers:
   other. If their build does not match, delete those two lines: F-Droid will sign with its
   own key and the app is still published, but F-Droid installs cannot cross-update with
   GitHub ones.
-  Checked so far: two builds of the same tree in different directories on one machine
-  give byte-identical unsigned APKs. Not yet checked: a GitHub Actions build against an
-  F-Droid build, which also differ in OS image and SDK location.
+  Verified for 1.1.0: F-Droid's CI built the tag from source and matched it against the
+  GitHub release APK ("compared built binary to supplied reference binary successfully").
 
-Not yet verified: the recipe passes `fdroid lint` and `rewritemeta`, but it has not been
-through a real F-Droid build. The `sudo` block (JDK 21) and the `sdkmanager` line (CMake)
-are the parts most likely to need adjusting to the current build server image.
+The recipe has been through a full pipeline on a fork of fdroiddata: lint, rewritemeta,
+scanner and build all pass.
 
 ## 3. Google Play
 

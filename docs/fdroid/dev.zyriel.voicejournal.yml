@@ -12,7 +12,8 @@ AutoName: Voice Journal
 
 RepoType: git
 Repo: https://github.com/ZyrielZero/voice-journal.git
-Binaries: https://github.com/ZyrielZero/voice-journal/releases/download/v%v/voice-journal-%v.apk
+Binaries: 
+  https://github.com/ZyrielZero/voice-journal/releases/download/v%v/voice-journal-%v.apk
 
 Builds:
   - versionName: 1.1.0
@@ -27,11 +28,11 @@ Builds:
       - yes
     prebuild:
       - sdkmanager 'cmake;3.22.1'
+      - sed -i -e '/foojay-resolver/d' ../settings.gradle.kts
       - bash ../scripts/fetch-models.sh
     scanignore:
       - app/src/main/assets/models/ggml-base.en-q5_1.bin
       - app/src/main/assets/models/ggml-silero-v5.1.2.bin
-      - app/src/main/assets/models/gte_base_q8.onnx
     ndk: 28.2.13676358
 
 AllowedAPKSigningKeys: 22aead90cc337d13a3b5f5a4cd6117afd9833995b2a6990620bc471b08cdcbb5
