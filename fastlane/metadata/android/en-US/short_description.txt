@@ -1,0 +1,1 @@
+Offline voice diary with on-device transcription and search by meaning

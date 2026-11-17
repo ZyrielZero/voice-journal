@@ -3,32 +3,59 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Privacy policy for Voice Journal, an offline voice diary for Android.">
   <title>Voice Journal — Privacy Policy</title>
   <style>
-    :root { color-scheme: light dark; }
+    :root {
+      color-scheme: light dark;
+      --bg: #F1E7D2; --fg: #2A2013; --muted: #6B5B45; --rule: #D9C9A8;
+      --card: #E7D9BC; --accent: #7A4F1F;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #171008; --fg: #EBDFC9; --muted: #A8997F; --rule: #3A2D1E;
+        --card: #2A1F14; --accent: #D99A4E;
+      }
+    }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+      background: var(--bg);
+      color: var(--fg);
       max-width: 42rem;
       margin: 0 auto;
       padding: 2.5rem 1.25rem 4rem;
-      line-height: 1.6;
+      line-height: 1.65;
     }
-    h1 { font-size: 1.7rem; margin-bottom: 0.25rem; }
-    .updated { color: #888; font-size: 0.9rem; margin-top: 0; }
-    h2 { font-size: 1.15rem; margin-top: 2rem; }
+    h1 { font-size: 1.8rem; margin-bottom: 0.25rem; }
+    .updated { color: var(--muted); font-size: 0.9rem; margin-top: 0; }
+    .summary {
+      background: var(--card);
+      border-radius: 14px;
+      padding: 0.9rem 1.2rem;
+      margin: 1.5rem 0;
+    }
+    .summary ul { margin: 0; padding-left: 1.2rem; }
+    h2 {
+      font-size: 1.15rem;
+      margin-top: 2.2rem;
+      padding-top: 1.2rem;
+      border-top: 1px solid var(--rule);
+      color: var(--accent);
+    }
     code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.9em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.85em;
       padding: 0.1em 0.35em;
       border-radius: 4px;
-      background: rgba(127,127,127,0.18);
+      background: var(--card);
+      overflow-wrap: anywhere;
     }
-    a { color: #6d5cf6; }
+    a { color: var(--accent); }
   </style>
 </head>
 <body>
   <h1>Voice Journal — Privacy Policy</h1>
-  <p class="updated">Last updated: October 21, 2026</p>
+  <p class="updated">Last updated: November 17, 2026 (version 1.1.0)</p>
 
   <p>
     Voice Journal is a fully offline application. It is built so that your
@@ -37,6 +64,15 @@
     <code>INTERNET</code> permission, so it is technically incapable of
     sending anything over a network.
   </p>
+
+  <div class="summary">
+    <ul>
+      <li>No internet permission, so nothing can be sent anywhere.</li>
+      <li>No accounts, ads, analytics or crash reporting.</li>
+      <li>Recording, transcription and search run on your phone.</li>
+      <li>Your journal leaves the phone only if you export it yourself.</li>
+    </ul>
+  </div>
 
   <h2>What we collect</h2>
   <p>
@@ -47,11 +83,17 @@
 
   <h2>Where your data lives</h2>
   <p>
-    Everything you create — audio recordings, transcripts, and their search
-    index — is stored only in the app's private storage on your device.
-    Recording, transcription, and search all run locally on the device using
-    on-device models. None of it is uploaded, backed up to a server, or made
-    accessible to anyone but you.
+    Everything you create — audio recordings, transcripts, and the search
+    index built from them — is stored only in the app's private storage on
+    your device. Recording, transcription and search all run locally. The
+    speech-recognition and search models are included in the app when you
+    install it; the app downloads nothing afterwards.
+  </p>
+  <p>
+    The journal is excluded from Android's cloud backup and from
+    device-to-device transfer, so it is not copied to a Google account or to
+    a new phone behind your back. The only way it moves is the export
+    described below.
   </p>
 
   <h2>Export and import</h2>
@@ -74,8 +116,9 @@
     anyone who gets the file can read and play it.
   </p>
   <p>
-    The app lock and "hide in recents" settings keep other people who are
-    holding your unlocked phone out of the journal. They do not encrypt the
+    The app lock and "Hide in recents" settings, both on by default, keep
+    other people who are holding your unlocked phone out of the journal and
+    block screenshots of it. They do not encrypt the
     journal on the device; there it is protected by Android's app sandbox
     and the device's own storage encryption.
   </p>
@@ -128,9 +171,11 @@
 
   <h2>Contact</h2>
   <p>
-    Questions about this policy or the app can be directed via the project
-    repository at
-    <a href="https://github.com/ZyrielZero/voice-journal">github.com/ZyrielZero/voice-journal</a>.
+    Questions about this policy or the app can be raised on the project's
+    <a href="https://github.com/ZyrielZero/voice-journal/issues">issue tracker</a>.
+    Voice Journal is free software; the
+    <a href="https://github.com/ZyrielZero/voice-journal">source code</a>
+    is public, so every statement on this page can be checked against it.
   </p>
 </body>
 </html>
