@@ -32,27 +32,30 @@ Entries longer than the model's 256-token window are embedded as overlapping win
 
 ## Performance
 
-Measured on a Pixel 10 Pro XL running build `ce5f560` (version 0.4.1). Raw data: [`vj-benchmark-ce5f560.json`](docs/benchmarks/vj-benchmark-ce5f560.json) and [`vj-accuracy-ce5f560.json`](docs/benchmarks/vj-accuracy-ce5f560.json).
+Measured on a Pixel 11 Pro XL (Android 17) running build `cd7b539` (version 1.1.0) with the dotprod native library. Raw data: [`vj-benchmark-cd7b539.json`](docs/benchmarks/vj-benchmark-cd7b539.json) and [`vj-accuracy-cd7b539.json`](docs/benchmarks/vj-accuracy-cd7b539.json).
 
-Transcription of real speech (LibriSpeech clips), single runs:
+Transcription of real speech (LibriSpeech clips), median of three runs after a warm-up:
 
 | Clip | VAD off | VAD on (default) |
 |---|---|---|
-| 30 s of speech | 2.78 s | 4.57 s |
-| 60 s of speech | 6.19 s | 9.28 s |
+| 10 s of speech | 2.56 s | 2.63 s |
+| 30 s of speech | 2.95 s | 3.04 s |
+| 60 s of speech | 9.04 s | 6.50 s |
+| 80 s, half of it pauses | 10.64 s | 6.96 s |
 
-So a one-minute entry takes about 9 seconds to become searchable text with the default settings. The 10 s clip is left out because its rows include model and VAD start-up. Each figure is one run, not a median; the bench now does a warm-up and three timed runs per row, and the table will be refreshed from the next device run.
+So a one-minute entry takes about 6.5 seconds to become searchable text with the default settings.
 
 | Operation | Median of 5 | Notes |
 |---|---|---|
-| Embed a typical entry (163 chars) | 8 ms | measured with the previous, smaller model (bge-small); gte-base is about 2.5x slower on a desktop CPU and has not been timed on a phone yet |
-| Semantic search, 5,000 entries | 10 ms | brute-force cosine, top 20, 384-dim vectors; vectors are now 768-dim |
+| Embed a typical entry (163 chars) | 15 ms | gte-base, int8 |
+| Embed a long entry (4,310 chars) | 315 ms | several overlapping windows |
+| Semantic search, 5,000 entries | 15 ms | brute-force cosine, top 20, 768-dim vectors |
 
-The benchmark file also has `whisper.clip10s/30s/60s` rows (1.51, 1.68 and 3.37 s). Those are a synthetic 220 Hz tone with VAD off, not speech; they are useful for comparing builds but understate real latency by about 1.7x to 1.8x, so they are not quoted as performance.
+The benchmark file also has `whisper.clip10s/30s/60s` rows. Those are a synthetic 220 Hz tone, not speech: with VAD off they take 2.69, 5.68 and 9.36 s, and with VAD on the tone is skipped as non-speech in well under a second. They are useful for comparing builds and are not quoted as performance.
 
-Accuracy: **4.50% word error rate with VAD on, 6.31% with VAD off**, on a LibriSpeech test-clean subset of 3 clips, 3 speakers, 7 utterances and 222 reference words (10 and 14 errors). That is a small sample: the 95% interval for 10 errors in 222 words is roughly 2.5% to 8.1%, so treat the figure as a sanity check, not a model comparison. There were zero deletions in every clip, so the VAD trim did not eat words. Scoring uses a plain normalizer (lowercase, punctuation stripped, curly apostrophes folded, a small British-to-American spelling map), stricter than Whisper's own `EnglishTextNormalizer`. Re-scoring the committed transcripts with the current normalizer gives 4.05% (9 errors) and 5.86% (13 errors); the difference is "grey" against GRAY. Per-clip numbers, including the raw hypotheses, are in the accuracy JSON. Growing the set to a few hundred utterances needs a device run; [`scripts/build-accuracy-set.py`](scripts/build-accuracy-set.py) builds the clips and manifest from a LibriSpeech download.
+Accuracy: **4.05% word error rate with VAD on, 5.41% with VAD off**, on a LibriSpeech test-clean subset of 3 clips, 3 speakers, 7 utterances and 222 reference words (9 and 12 errors). That is a small sample: the 95% interval for 9 errors in 222 words is roughly 2.2% to 7.5%, so treat the figure as a sanity check, not a model comparison. There were zero deletions in every clip, so the VAD trim did not eat words. Scoring uses a plain normalizer (lowercase, punctuation stripped, curly apostrophes folded, a small British-to-American spelling map), stricter than Whisper's own `EnglishTextNormalizer`. Per-clip numbers, including the raw hypotheses, are in the accuracy JSON. Growing the set to a few hundred utterances needs a device run; [`scripts/build-accuracy-set.py`](scripts/build-accuracy-set.py) builds the clips and manifest from a LibriSpeech download.
 
-Voice activity detection (silero v5.1.2) is on by default. On the committed clips it lowered WER from 6.31% to 4.50%; the whole difference is the 60 s clip (9 errors without VAD, 5 with, including a hallucinated trailing word). It costs about 1.5x to 1.7x in latency on continuous speech. The earlier "10.9 s to 2.3 s" result came from a synthetic tone with silent gaps, which silero may not treat as speech at all, so it is not a real-speech number. The bench now measures the same comparison on LibriSpeech speech with inserted pauses (`acc.speech_gaps` rows); that number is pending a device run.
+Voice activity detection (silero v5.1.2) is on by default. On the committed clips it lowered WER from 5.41% to 4.05%: two fewer errors on the 60 s clip and one fewer on the 10 s clip. On continuous speech it costs about 3% in latency (the 10 s and 30 s clips), and it is faster wherever there are pauses to skip. The `acc.speech_gaps` rows measure that on real speech: two clips, each followed by room-tone silence of its own length. With VAD on, no words are lost and WER is 3.7%; with VAD off, whisper invents 21 words in the trailing silence (22.4% WER) and takes half as long again.
 
 Search stays instant at journal scale, which is why there is no vector database in this app.
 
