@@ -34,7 +34,7 @@ Builds:
       - app/src/main/assets/models/gte_base_q8.onnx
     ndk: 28.2.13676358
 
-AllowedAPKSigningKeys: e6be235505cece28cfc87abc5508469efa0da1295e253d8e70f8f35cc428eee5
+AllowedAPKSigningKeys: 22aead90cc337d13a3b5f5a4cd6117afd9833995b2a6990620bc471b08cdcbb5
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[\d.]+$

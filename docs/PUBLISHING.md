@@ -104,6 +104,15 @@ A verified Play Console account can register a package name and signing key; whe
 F-Droid and GitHub installs need that depends on the rules in force when you publish.
 Check them before relying on F-Droid alone.
 
+## The signing key
+
+The release key lives outside the repo in `~/voice-journal-signing` (keystore and
+`keystore.properties`), with a copy of the properties file, git-ignored, in the repo root.
+The same key is in the repository's Actions secrets. Keep a backup off this computer: the
+1.0.0 key was lost, which is why 1.1.0 cannot update a 1.0.0 install. If it ever has to be
+replaced again, `scripts/new-release-key.sh` creates a new one, and the fingerprint it
+prints has to be pinned in `release.yml`, the README and the F-Droid recipe.
+
 ## Updating later
 
 - Each release: add `changelogs/<versionCode>.txt` (500 characters at most), bump

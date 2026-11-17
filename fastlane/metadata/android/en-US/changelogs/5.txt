@@ -4,3 +4,4 @@
 - Exports can be password-encrypted.
 - App lock and screenshot blocking, on by default.
 - New icon and many smaller fixes.
+- New signing key: export, uninstall 1.0.0, install, import.
