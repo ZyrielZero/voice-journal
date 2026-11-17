@@ -10,8 +10,8 @@ import android.util.Log
  * from /proc/cpuinfo before anything is loaded, because the optimized
  * library would SIGILL on an older core.
  *
- * Hardware-verified (Pixel 10 Pro XL, v0.4.x): transcription runs on-device;
- * see the committed benchmark JSON. Those numbers predate the dotprod build.
+ * Hardware-verified (Pixel 11 Pro XL, v1.1.0, dotprod library):
+ * transcription runs on-device; see the committed benchmark JSON.
  */
 object WhisperBridge {
 
