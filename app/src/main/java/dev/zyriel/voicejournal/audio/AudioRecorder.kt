@@ -17,6 +17,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
+import kotlin.math.log10
+import kotlin.math.sqrt
 
 /**
  * Captures microphone audio at 16 kHz mono 16-bit PCM and streams it to a
@@ -43,6 +45,9 @@ class AudioRecorder(private val scope: CoroutineScope) : RecordingController.Cap
 
     private val _elapsedMs = MutableStateFlow(0L)
     override val elapsedMs: StateFlow<Long> = _elapsedMs.asStateFlow()
+
+    private val _level = MutableStateFlow(0f)
+    override val level: StateFlow<Float> = _level.asStateFlow()
 
     @Volatile private var job: Job? = null
 
@@ -121,6 +126,7 @@ class AudioRecorder(private val scope: CoroutineScope) : RecordingController.Cap
                         if (read > 0) {
                             wav.appendSamples(chunk, read)
                             _elapsedMs.value = wav.durationMs()
+                            _level.value = levelOf(chunk, read)
                         } else if (read < 0) {
                             _state.value = State.Error("AudioRecord.read error $read")
                             break
@@ -137,6 +143,7 @@ class AudioRecorder(private val scope: CoroutineScope) : RecordingController.Cap
             } finally {
                 runCatching { recorder.stop() }
                 recorder.release()
+                _level.value = 0f
                 if (_state.value is State.Recording) _state.value = State.Idle
             }
         }
@@ -157,5 +164,27 @@ class AudioRecorder(private val scope: CoroutineScope) : RecordingController.Cap
     override suspend fun stopAndWait() {
         job?.cancelAndJoin()
         job = null
+    }
+
+    companion object {
+        /** Loudness below this reads as silence on the meter; a quiet room sits around here. */
+        private const val FLOOR_DB = -55f
+        /** Loudness at or above this fills the meter; speech close to the phone reaches it. */
+        private const val CEILING_DB = -15f
+
+        /**
+         * How loud the first [count] samples are, from 0 (silence) to 1, for
+         * the meter on the record button. RMS on a decibel scale, because
+         * loudness is heard that way: a linear meter barely moves for speech.
+         */
+        fun levelOf(samples: ShortArray, count: Int): Float {
+            if (count <= 0) return 0f
+            var sum = 0.0
+            for (i in 0 until count) sum += samples[i].toDouble() * samples[i]
+            val rms = sqrt(sum / count) / Short.MAX_VALUE
+            if (rms <= 0.0) return 0f
+            val db = 20.0 * log10(rms)
+            return ((db - FLOOR_DB) / (CEILING_DB - FLOOR_DB)).toFloat().coerceIn(0f, 1f)
+        }
     }
 }

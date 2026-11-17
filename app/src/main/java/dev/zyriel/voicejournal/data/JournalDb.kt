@@ -40,9 +40,17 @@ interface JournalDao {
      * deleted) since, and the caller drops the stale vector. Never use
      * [update] for derived columns: it writes every column from a snapshot
      * and can revert a concurrent edit.
+     *
+     * Takes the vector already encoded as its BLOB ([Converters]); call it
+     * through [setEmbeddingIfUnchanged]. A FloatArray parameter here does
+     * not go through the type converter: Room expands any array bound in
+     * a @Query into one placeholder per element, as for an IN list, so
+     * the statement became `SET embedding = ?,?,?,...` and failed to
+     * compile on the device. Every backfill write failed that way, and
+     * no JVM test could see it because none of them runs Room.
      */
     @Query("UPDATE entries SET embedding = :embedding, embeddingModel = :model WHERE id = :id AND transcript = :transcript")
-    suspend fun setEmbeddingIfUnchanged(id: Long, transcript: String, embedding: FloatArray, model: String): Int
+    suspend fun setEmbeddingBlobIfUnchanged(id: Long, transcript: String, embedding: ByteArray, model: String): Int
 
     /** Saves new text and clears the now-stale vector in one statement. */
     @Query("UPDATE entries SET transcript = :transcript, embedding = NULL, embeddingModel = NULL WHERE id = :id")
@@ -51,6 +59,10 @@ interface JournalDao {
     @Query("SELECT COUNT(*) FROM entries WHERE audioPath = :path")
     suspend fun countByAudioPath(path: String): Int
 }
+
+/** [JournalDao.setEmbeddingBlobIfUnchanged] for a vector, encoded the way the column stores it. */
+suspend fun JournalDao.setEmbeddingIfUnchanged(id: Long, transcript: String, embedding: FloatArray, model: String): Int =
+    setEmbeddingBlobIfUnchanged(id, transcript, Converters().fromFloatArray(embedding)!!, model)
 
 /**
  * Schemas are exported to app/schemas/ and committed; every version bump

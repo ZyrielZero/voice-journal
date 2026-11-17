@@ -1,6 +1,6 @@
 - Faster transcription on newer phones, with automatic fallback on older ones.
 - Recordings survive crashes, calls and a full disk; any that cannot be transcribed are shown and can be retried.
-- Search uses meaning and exact words, and covers long entries.
+- Search finds entries by subject even when the word was never said, as well as by exact words, and covers long entries.
 - Exports can be password-encrypted.
 - App lock and screenshot blocking, on by default.
 - New icon and many smaller fixes.

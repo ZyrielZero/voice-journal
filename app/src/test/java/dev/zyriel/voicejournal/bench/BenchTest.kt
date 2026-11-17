@@ -71,8 +71,8 @@ class BenchTest {
     @Test fun jvmPerfRun() = runBlocking {
         fun asset(n: String) = TestPaths.mainAsset("models/$n")
         val engine = OnnxEmbeddingEngine(
-            modelBytes = asset("bge_small_en_v15_q8.onnx").readBytes(),
-            vocab = WordPieceTokenizer(asset("bge_vocab.txt").inputStream()),
+            modelBytes = asset("gte_base_q8.onnx").readBytes(),
+            vocab = WordPieceTokenizer(asset("bert_vocab.txt").inputStream()),
         )
         val typical = "Today I worked on the transcription pipeline and finally got the native " +
             "build running at full speed. The optimization flag was the whole problem."
@@ -84,9 +84,9 @@ class BenchTest {
         val rng = Random(42)
         val corpus = List(5_000) { i ->
             JournalEntry(id = i.toLong(), transcript = "e$i", timestampMs = 0, audioPath = "",
-                embedding = FloatArray(384) { rng.nextFloat() - 0.5f })
+                embedding = FloatArray(OnnxEmbeddingEngine.DIM) { rng.nextFloat() - 0.5f })
         }
-        val q = FloatArray(384) { rng.nextFloat() - 0.5f }
+        val q = FloatArray(OnnxEmbeddingEngine.DIM) { rng.nextFloat() - 0.5f }
         val search = Bench.measure("search.top20.n5000", warmups = 2, runs = 5) {
             VectorSearch.topK(q, corpus, 20)
         }

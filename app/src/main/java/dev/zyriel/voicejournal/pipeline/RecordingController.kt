@@ -13,6 +13,7 @@ import dev.zyriel.voicejournal.data.JournalDb
 import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.data.JournalStore
 import dev.zyriel.voicejournal.search.EmbeddingEngine
+import dev.zyriel.voicejournal.search.ModelAssets
 import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import dev.zyriel.voicejournal.search.WordPieceTokenizer
 import dev.zyriel.voicejournal.whisper.ModelUnavailableException
@@ -91,6 +92,8 @@ class RecordingController internal constructor(
     interface Capture {
         val state: StateFlow<AudioRecorder.State>
         val elapsedMs: StateFlow<Long>
+        /** Input loudness while recording, 0 (silence) to 1; 0 when idle. */
+        val level: StateFlow<Float>
         /** True once capture into [outFile] is launched; false with the reason in [state]. */
         fun start(outFile: File): Boolean
         /** Stops capture and returns once the WAV is finalized on disk. */
@@ -185,10 +188,13 @@ class RecordingController internal constructor(
         }
         scope.launch {
             engine = try {
-                loadEngine()
+                loadEngine().also { Log.i(TAG, "embedding engine " + if (it == null) "unavailable" else "loaded") }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // Search silently falls back to keywords without it, so
+                // the reason has to be in the log.
+                Log.w(TAG, "embedding engine failed to load, search is keywords only", e)
                 null
             }
             runSweep()
@@ -361,6 +367,29 @@ class RecordingController internal constructor(
     }
 
     /**
+     * Stops recording and throws the audio away: no transcription, no
+     * entry. Takes the same Recording -> Transcribing step as
+     * [stopAndTranscribe], so of a Discard racing a Stop (the button, the
+     * notification, the length cap) exactly one wins and the other is
+     * ignored. The pipeline shows Transcribing for the moment it takes to
+     * close the file. If the process dies inside that moment the WAV is
+     * left behind and the next launch recovers it as an entry, which errs
+     * on the side of keeping audio.
+     */
+    fun discardRecording() {
+        if (!_pipeline.tryBeginStop()) return
+        val file = activeFile ?: run { _pipeline.value = PipelineState.Idle; return }
+        scope.launch {
+            try {
+                recorder.stopAndWait()
+                file.delete()
+            } finally {
+                finish(PipelineState.Idle)
+            }
+        }
+    }
+
+    /**
      * Publishes a terminal state, clearing [activeFile] first. The other
      * order lets a Rec tap that sees Idle start a new recording and set
      * [activeFile], which a late clear would then wipe, exposing the live
@@ -444,8 +473,8 @@ class RecordingController internal constructor(
                 transcribe = { transcriber.transcribeStrict(it) },
                 loadEngine = {
                     OnnxEmbeddingEngine(
-                        modelBytes = app.assets.open("models/bge_small_en_v15_q8.onnx").use { it.readBytes() },
-                        vocab = app.assets.open("models/bge_vocab.txt").use { WordPieceTokenizer(it) },
+                        model = ModelAssets.map(app.assets, "models/gte_base_q8.onnx"),
+                        vocab = app.assets.open("models/bert_vocab.txt").use { WordPieceTokenizer(it) },
                     )
                 },
                 host = AndroidHost(app),

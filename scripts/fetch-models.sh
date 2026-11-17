@@ -51,10 +51,10 @@ fetch() {
 
 fetch ggml-base.en-q5_1.bin \
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en-q5_1.bin"
-fetch bge_small_en_v15_q8.onnx \
-    "https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/ea104dacec62c0de699686887e3f920caeb4f3e3/onnx/model_quantized.onnx"
-fetch bge_vocab.txt \
-    "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/vocab.txt"
+fetch gte_base_q8.onnx \
+    "https://huggingface.co/Xenova/gte-base/resolve/ffdeea73386c8c0f73931ebed6878aa715eca7d3/onnx/model_quantized.onnx"
+fetch bert_vocab.txt \
+    "https://huggingface.co/thenlper/gte-base/resolve/c078288308d8dee004ab72c6191778064285ec0c/vocab.txt"
 fetch ggml-silero-v5.1.2.bin \
     "https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v5.1.2.bin"
 

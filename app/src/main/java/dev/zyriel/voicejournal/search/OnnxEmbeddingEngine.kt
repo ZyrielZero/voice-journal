@@ -8,44 +8,60 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
 import java.nio.LongBuffer
 import kotlin.math.sqrt
 
 /**
- * bge-small-en-v1.5 (int8 ONNX) via ONNX Runtime. 384-dim vectors.
+ * gte-base (int8 ONNX) via ONNX Runtime. 768-dim vectors.
  *
- * BGE specifics that are easy to get wrong:
- *  - Pooling is CLS token, not mean pooling.
- *  - Vectors must be L2-normalized before cosine ranking.
- *  - Queries (not documents) get a retrieval instruction prefix.
+ * It replaced bge-small-en-v1.5 because it is much better at finding an
+ * entry by what it is about when the entry never says the word: "physics"
+ * for a ramble about clocks on fast ships, "poems" for a recited sonnet
+ * (ConceptSearchTest holds the comparison set and the bar).
  *
- * Model/tokenizer bytes are injected so the class stays JVM-testable;
- * Android supplies them from assets.
+ * GTE specifics that are easy to get wrong, each the opposite of BGE:
+ *  - Pooling is the mean over all tokens, not the CLS token.
+ *  - Queries and documents are embedded the same way; there is no
+ *    retrieval instruction prefix.
+ *  - Vectors must still be L2-normalized before cosine ranking.
+ *
+ * The model and tokenizer are injected so the class stays JVM-testable.
+ * Android passes the model as a read-only mapping of the APK asset
+ * ([ModelAssets.map]): at 110 MB it must not pass through the Java heap,
+ * where reading it into an array costs twice its size for a moment.
  */
-class OnnxEmbeddingEngine(
-    modelBytes: ByteArray,
+class OnnxEmbeddingEngine private constructor(
     vocab: WordPieceTokenizer,
+    open: (OrtEnvironment, OrtSession.SessionOptions) -> OrtSession,
 ) : EmbeddingEngine {
+
+    /** [model] must be a direct buffer (a file mapping); ONNX Runtime reads it in place. */
+    constructor(model: ByteBuffer, vocab: WordPieceTokenizer) :
+        this(vocab, { env, opts -> env.createSession(model, opts) })
+
+    /** For tests and small models: the bytes live on the Java heap. */
+    constructor(modelBytes: ByteArray, vocab: WordPieceTokenizer) :
+        this(vocab, { env, opts -> env.createSession(modelBytes, opts) })
 
     companion object {
         /**
          * Stored with every vector; the backfill re-embeds rows whose tag
-         * differs. "+tok2" marks the WordPiece tokenizer fix and "+chunk1"
-         * the switch to one vector per [MAX_TOKENS] window: vectors from
-         * before either are stale even though the model is the same.
+         * differs, which is how a journal embedded by an older build (or
+         * an older model: bge-small, 384 dims) moves over at next launch.
+         * "+chunk1" is one vector per [MAX_TOKENS] window.
          */
-        const val MODEL_TAG = "bge-small-en-v1.5-q8+tok2+chunk1"
-        const val DIM = 384
+        const val MODEL_TAG = "gte-base-q8+chunk1"
+        const val DIM = 768
         const val MAX_TOKENS = 256
         /** Ids shared by neighbouring windows of a long entry. */
         const val CHUNK_OVERLAP = 32
         /**
          * Windows per entry. 16 windows cover about 3,400 tokens, more than
          * a 15-minute entry at a fast speaking rate, and cap the stored
-         * vector at 16 x 384 floats (about 25 KB).
+         * vector at 16 x 768 floats (about 49 KB).
          */
         const val MAX_CHUNKS = 16
-        const val QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
     }
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
@@ -54,7 +70,7 @@ class OnnxEmbeddingEngine(
     // Options are only read at session creation, so they are closed at once.
     private val session: OrtSession = OrtSession.SessionOptions().use { opts ->
         opts.setIntraOpNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(2, 4))
-        env.createSession(modelBytes, opts)
+        open(env, opts)
     }
     private val tokenizer = vocab
     private val mutex = Mutex()
@@ -80,9 +96,9 @@ class OnnxEmbeddingEngine(
         out
     }
 
-    /** Embeds a search query with the BGE retrieval prefix. Always one vector. */
+    /** Embeds a search query: one vector, truncated to [MAX_TOKENS]. */
     override suspend fun embedQuery(text: String): FloatArray? = guarded {
-        infer(tokenizer.encode(QUERY_PREFIX + text, MAX_TOKENS))
+        infer(tokenizer.encode(text, MAX_TOKENS))
     }
 
     private suspend fun guarded(block: suspend () -> FloatArray): FloatArray? = try {
@@ -116,12 +132,21 @@ class OnnxEmbeddingEngine(
                         session.run(inputs).use { result ->
                             @Suppress("UNCHECKED_CAST")
                             val hidden = result[0].value as Array<Array<FloatArray>>
-                            l2Normalize(hidden[0][0].copyOf())   // CLS token
+                            l2Normalize(meanPool(hidden[0]))
                         }
                     }
                 }
             }
         }
+    }
+
+    /** Mean over every token. One text per call, so there is no padding to mask out. */
+    private fun meanPool(tokens: Array<FloatArray>): FloatArray {
+        val out = FloatArray(tokens[0].size)
+        for (t in tokens) for (i in out.indices) out[i] += t[i]
+        val inv = 1f / tokens.size
+        for (i in out.indices) out[i] *= inv
+        return out
     }
 
     private fun l2Normalize(v: FloatArray): FloatArray {

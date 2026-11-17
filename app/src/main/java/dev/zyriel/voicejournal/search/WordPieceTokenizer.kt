@@ -3,7 +3,7 @@ package dev.zyriel.voicejournal.search
 import java.io.InputStream
 
 /**
- * BERT WordPiece tokenizer (uncased) for bge-small-en-v1.5.
+ * BERT WordPiece tokenizer (uncased), the one gte-base was trained with.
  *
  * Pure Kotlin so it's unit-tested on the JVM. Implements the standard
  * pipeline: lowercase, strip accents, split on whitespace and punctuation,

@@ -7,8 +7,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Where [HybridSearch.SEMANTIC_FLOOR] and [HybridSearch.SEMANTIC_MARGIN]
- * come from. Runs the bundled int8 model over a small journal and a set of
+ * Where [HybridSearch.SEMANTIC_FLOOR], [HybridSearch.SEMANTIC_MARGIN] and
+ * [HybridSearch.SEMANTIC_STRONG] come from, together with the larger and
+ * harder set in [ConceptSearchTest]. Runs the bundled int8 model over a small journal and a set of
  * short queries, each labelled with the entries a person would expect
  * back, and checks what the search is supposed to guarantee:
  *
@@ -17,9 +18,9 @@ import org.junit.Test
  *  - a query about something the journal never mentions returns nothing,
  *    or at most one loosely adjacent entry.
  *
- * It does not claim a clean separation, because there is none: bge
+ * It does not claim a clean separation, because there is none: gte
  * similarities sit in a narrow band, and the printed table shows unrelated
- * pairs scoring as high as 0.59 while a real match can be as low as 0.54.
+ * pairs scoring as high as 0.79 while a real match can be as low as 0.78.
  * The floor and margin are therefore a trim, not a relevance oracle, and
  * twelve entries are a small sample. If the model, its quantization or the
  * query prefix changes, this test is what has to pass again, and the
@@ -70,8 +71,8 @@ class SearchCalibrationTest {
     @Test
     fun floorSeparatesWhatBelongsFromWhatDoesNot() = runBlocking {
         val engine = OnnxEmbeddingEngine(
-            modelBytes = asset("bge_small_en_v15_q8.onnx").readBytes(),
-            vocab = WordPieceTokenizer(asset("bge_vocab.txt").inputStream()),
+            modelBytes = asset("gte_base_q8.onnx").readBytes(),
+            vocab = WordPieceTokenizer(asset("bert_vocab.txt").inputStream()),
         )
         val entries = journal.mapIndexed { i, text ->
             JournalEntry(id = i.toLong(), transcript = text, timestampMs = i.toLong(), audioPath = "", embedding = engine.embed(text)!!)
