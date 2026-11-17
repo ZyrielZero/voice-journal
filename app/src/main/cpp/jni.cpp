@@ -62,7 +62,13 @@ Java_dev_zyriel_voicejournal_whisper_WhisperBridge_fullTranscribe(
     params.n_threads = nThreads > 0 ? nThreads : 4;
     params.print_progress = false;
     params.print_realtime = false;
-    params.no_timestamps = true;
+    // Timestamps stay on even though only the text is returned. Without
+    // them whisper cannot tell where in a 30 s window the decoder stopped,
+    // so it always advances a whole window, and whatever was spoken after
+    // a pause in that window is silently dropped. Measured on a clip with
+    // pauses: 64 of 107 words lost with timestamps off, none with them on,
+    // at the same speed.
+    params.no_timestamps = false;
     // Decoder knobs, passed explicitly so the Kotlin side owns them.
     // temperature_inc <= 0 disables the fallback ladder (one pass only);
     // whisper's default is 0.2 (up to six passes per segment).
