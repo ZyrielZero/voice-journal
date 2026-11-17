@@ -30,7 +30,46 @@ dotprod native build, non-speech-token suppression and the VOICE_RECOGNITION mic
 ## Before tagging 1.1.0
 
 Everything in this list is covered by JVM unit tests where it can be, and none of it has
-run on a phone. Each item is a few minutes on a device:
+run on a phone. Each item is a few minutes on a device.
+[`scripts/device-verify.sh`](../scripts/device-verify.sh) walks the list over adb with the
+debug build: it plants test recordings, kills the app at the right moments, reads the
+service type, the log and the database itself, and asks for the parts only a person can
+do. `bash scripts/device-verify.sh` runs everything; `bash scripts/device-verify.sh 2 6 9`
+runs the three steps that need nobody to speak.
+
+First device run, 2026-11-16, Pixel 11 Pro XL on Android 17 (API 37), debug build:
+
+- **Item 2 passes, after a fix it found.** `ServiceCompat.startForeground` in
+  androidx.core 1.16.0 masks the type to the ones Android 14 knew, so `mediaProcessing`
+  became "none" and the system refused the start ("Starting FGS with type none ... has
+  been prohibited"). Recovery still ran, but without its service. `RecordingService` now
+  calls the platform `startForeground`; recovery shows as `mediaProcessing`, with and
+  without the microphone permission, and survives a kill mid-transcription.
+- **Item 6, first half:** three killed recoveries moved the recording to `quarantine/`.
+  The notice and Retry have not been looked at by a person yet.
+- **Item 9 passes on the automated part:** no crash at cold start, every entry got an
+  embedding on the device. ONNX Runtime logs one warning ("Android telemetry is
+  unavailable because the 1DS Java HttpClient was not initialized") and carries on.
+- **Item 8 found a threading problem, now fixed.** The accuracy suite ran for over 20
+  minutes without finishing. A profile showed the time in `ggml_barrier`: threads
+  spinning while they wait for each other. Two causes: whisper.cpp runs the VAD on a
+  hard-coded 4 threads (a 60 s clip took 80 to 130 s in the VAD alone), and the app asked
+  whisper for 6 threads, where fewer were faster (see `Transcriber.WHISPER_THREADS` for
+  the numbers). The VAD now runs on one thread (a local patch, see `VENDORED.md`) and so
+  does whisper. With that the suite finishes in about 2.5 minutes, every row's three runs
+  agree to within a few percent, and a 60 s clip takes 6.7 s with VAD on. WER on the
+  222-word set: 3.60% VAD on, 5.86% VAD off. These came from an uncommitted tree, so no
+  JSON is committed yet; rerun the suite and the benchmark from the commit and refresh
+  the README from those.
+- **Also found and fixed: speech after a pause was dropped.** The `acc.speech_gaps` rows
+  (two clips, each followed by room-tone silence of its own length) lost 64 of 107 words
+  with VAD on and 26 with VAD off, where each clip alone loses none. Cause: the bridge
+  set `no_timestamps`, so whisper advanced a full 30 s window whenever the decoder
+  stopped early at a pause. With timestamps on, both rows lose no words (VAD on: 3.7%
+  WER; VAD off: 21 hallucinated words in the trailing silence, which is what VAD is on
+  by default to prevent). Speed is unchanged; set-wide WER is 4.05% VAD on, 5.41% off.
+  Still worth one real recording with a ten-second pause in the middle.
+- Items 1, 3, 4, 5, 7, 10 and the by-hand confirmations in 2, 6 and 9 are still open.
 
 1. **Phone call mid-recording** (audio-focus stop): the entry up to the call is saved.
 2. **Kill mid-transcription, relaunch** (recovery service): "Recovering an earlier
@@ -41,9 +80,10 @@ run on a phone. Each item is a few minutes on a device:
    and the recording survives the screen turning off.
 4. **Full disk during recording** (capture-error salvage): the partial entry is saved.
 5. **Stop from the notification with the app backgrounded**, then let it transcribe.
-6. **Quarantine:** make transcription fail three launches in a row (for example by
-   pushing a corrupt `ggml-base.en-q5_1.bin` into `files/`), check the notice appears
-   with Retry and Delete, restore the model, tap Retry.
+6. **Quarantine:** kill the app mid-recovery on three launches in a row, check the
+   notice appears with Retry and Delete on the fourth, tap Retry. A corrupt model does
+   not get there: a wrong-length model file is replaced from the APK, and one that fails
+   to load aborts the sweep without counting against the recording.
 7. **Encrypted export and import** round trip through a real document provider (Files,
    Drive), including a wrong password and a rotation while the file picker is open.
 8. **Accuracy suite** with non-speech-token suppression on, and the **benchmark** on
