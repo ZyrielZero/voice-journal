@@ -17,7 +17,7 @@ Binaries: https://github.com/ZyrielZero/voice-journal/releases/download/v%v/voic
 Builds:
   - versionName: 1.1.0
     versionCode: 5
-    commit: REPLACE_WITH_FULL_COMMIT_HASH_OF_TAG_v1.1.0
+    commit: c4d4bd1f9368feb604b1da98f37ecad2e0f5ca2f
     subdir: app
     sudo:
       - apt-get update
