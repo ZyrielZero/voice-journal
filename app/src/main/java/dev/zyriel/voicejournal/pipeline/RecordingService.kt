@@ -16,6 +16,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import dev.zyriel.voicejournal.MainActivity
 import dev.zyriel.voicejournal.R
@@ -97,7 +98,9 @@ class RecordingService : Service() {
         // a typeless start. Seen on a Pixel running Android 17.
         try {
             val notification = buildNotification(phaseOf(controller.pipeline.value))
-            if (Build.VERSION.SDK_INT >= 29) {
+            // Typed from Android 11, where the microphone type first exists.
+            // Below that the two-argument call takes the manifest's types.
+            if (Build.VERSION.SDK_INT >= 30) {
                 startForeground(NOTIFICATION_ID, notification, serviceTypeFor(controller.pipeline.value))
             } else {
                 startForeground(NOTIFICATION_ID, notification)
@@ -146,6 +149,7 @@ class RecordingService : Service() {
      * `microphone` while a recording or its transcription is in flight;
      * otherwise this start is for recovery, which only reads a file.
      */
+    @RequiresApi(30)
     private fun serviceTypeFor(state: RecordingController.PipelineState): Int = when {
         state is RecordingController.PipelineState.Recording ||
             state is RecordingController.PipelineState.Transcribing ->
