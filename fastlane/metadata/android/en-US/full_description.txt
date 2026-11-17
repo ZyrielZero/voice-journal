@@ -1,0 +1,32 @@
+Voice Journal is a voice diary that works entirely on your phone. Tap record, speak, and your entry is transcribed on the device and becomes searchable. The app has no internet permission, so Android itself will not let it send anything anywhere.
+
+WHAT IT DOES
+
+• Record an entry with one tap. Recording continues with the screen off.
+• Speech is transcribed on the phone with Whisper. A one-minute entry takes about 7 seconds on a Pixel 11 Pro XL.
+• Search by meaning: "food" finds the entry about your grandmother's lamb stew, even though the word was never said.
+• Search by exact words too, for names and terms.
+• Open an entry full screen, play it back with a seek bar and speed control, and correct the transcript.
+• Export the whole journal (audio and transcripts) to a file you choose, optionally encrypted with a password, and import it on another phone.
+• App lock with fingerprint, face or screen lock, and screenshot blocking. Both are on by default.
+• Light and dark themes.
+• A recording interrupted by a crash, a call or a full disk is recovered and transcribed the next time you open the app.
+
+PRIVACY
+
+• No internet permission. No accounts, ads, analytics or crash reporting.
+• Recordings, transcripts and the search index stay in the app's private storage.
+• The journal is excluded from Android backups. Moving it is something only you do, with Export.
+• A password-protected export is encrypted with AES-256-GCM. There is no recovery for a forgotten password.
+• The app lock keeps other people out of the app on an unlocked phone. It is not encryption: on the device the journal is protected by Android's app sandbox and the phone's own storage encryption.
+
+GOOD TO KNOW
+
+• Transcription is English only for now.
+• Needs a 64-bit ARM phone running Android 8.0 or newer.
+• The download is about 210 MB because the speech and search models are included. Nothing is downloaded later.
+• Transcription is accurate but not perfect; you can edit any transcript.
+
+FREE SOFTWARE
+
+Voice Journal is licensed under the GNU GPL v3. Source code, build instructions and benchmarks: https://github.com/ZyrielZero/voice-journal
