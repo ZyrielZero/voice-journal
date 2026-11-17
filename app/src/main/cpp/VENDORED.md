@@ -23,7 +23,11 @@ included with `add_subdirectory`, as this directory's `CMakeLists.txt` does.
 ## Updating
 
 1. Replace the kept directories and files from the new upstream tag.
-2. Re-apply nothing: there are no local patches.
+2. Re-apply the one local patch: in `src/whisper.cpp`, where `whisper_full` creates the
+   VAD context, set `vad_ctx_params.n_threads = 1` (search for "voice-journal local
+   patch"). Upstream hard-codes 4 threads there and ignores the caller's count; on a
+   phone that made a 60 s clip take one to two minutes in the VAD alone. Drop the patch
+   if upstream starts passing the caller's thread count through.
 3. Update the version above and in `THIRD_PARTY_NOTICES.md`.
 4. Re-run the on-device benchmark and accuracy suites; a new ggml can move
    both speed and output.

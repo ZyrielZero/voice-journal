@@ -6664,6 +6664,11 @@ static bool whisper_vad(
 
     if (state->vad_context == nullptr) {
         struct whisper_vad_context_params vad_ctx_params = whisper_vad_default_context_params();
+        // voice-journal local patch (see VENDORED.md): upstream runs the VAD on
+        // its default of 4 threads whatever the caller asked for. The Silero
+        // graph is tiny and evaluated once per 32 ms frame, so the threads
+        // spend their time spinning in ggml_barrier waiting for each other.
+        vad_ctx_params.n_threads = 1;
         struct whisper_vad_context * vctx = whisper_vad_init_from_file_with_params(params.vad_model_path, vad_ctx_params);
         if (vctx == nullptr) {
             WHISPER_LOG_ERROR("%s: failed to initialize VAD context\n", __func__);

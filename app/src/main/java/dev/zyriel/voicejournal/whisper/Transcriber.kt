@@ -66,6 +66,22 @@ class Transcriber(private val context: Context) {
         const val DEFAULT_SUPPRESS_NST = true
 
         /**
+         * Threads whisper computes on: one. ggml's worker threads
+         * synchronise by spinning, and base.en's matrices are small enough
+         * that the waiting outweighs the shared work, so more threads were
+         * slower, and now and then one run stalled for many times its
+         * normal length. Measured on a Pixel 11 Pro XL (Tensor G6, 7 cores,
+         * VAD on) with a 60 s LibriSpeech clip: 1 thread 6.0 to 7.0 s,
+         * 2 threads 5.3 to 7.1 s with one run of 65 s, 3 threads 10 s,
+         * 4 threads 12 to 15 s, 6 threads 13 to 18 s (the old value, and
+         * 27 to 45 s once the phone was warm). A single thread never
+         * stalled: the accuracy suite's three runs per row agreed to within
+         * a few percent. Not yet measured on a slower phone, where the
+         * balance may differ.
+         */
+        const val WHISPER_THREADS = 1
+
+        /**
          * whisper's own default. Each segment that fails the entropy or
          * logprob thresholds is re-decoded at T += 0.2, up to six passes.
          * Disabling it (any value <= 0) is the review's suggested
@@ -209,13 +225,18 @@ class Transcriber(private val context: Context) {
             }
         }
         if (samples.isEmpty()) return@withLock ""
-        val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+        val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, WHISPER_THREADS)
         val vad = if (useVad) vadPathLocked() else null
         val nst = suppressNst
         val tInc = temperatureInc
-        withContext(Dispatchers.Default) {
+        val started = System.nanoTime()
+        val bytes = withContext(Dispatchers.Default) {
             WhisperBridge.transcribe(ctx, samples, threads, vad, nst, tInc)
-        }?.toString(Charsets.UTF_8)?.trim()
+        }
+        // Durations only, never content.
+        Log.i(TAG, "transcribed ${samples.size / 16_000} s of audio in " +
+            "${(System.nanoTime() - started) / 1_000_000} ms ($threads threads, vad ${vad != null})")
+        bytes?.toString(Charsets.UTF_8)?.trim()
     }
 
     /**
