@@ -21,8 +21,8 @@ Builds:
     subdir: app
     sudo:
       - apt-get update
-      - apt-get install -y openjdk-21-jdk-headless
-      - update-java-alternatives -a
+      - apt-get install -y -t trixie openjdk-21-jdk-headless
+      - update-alternatives --auto java
     gradle:
       - yes
     prebuild:
