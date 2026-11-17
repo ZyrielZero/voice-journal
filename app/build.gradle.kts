@@ -120,8 +120,9 @@ kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
 
-// wp4: the 33 MB embedding model is read on every cold start; storing it
-// uncompressed skips inflating it each time, the same as the whisper .bin.
+// wp4: the 110 MB embedding model is memory-mapped out of the APK at every
+// cold start (ModelAssets.map), which only works for an asset stored
+// uncompressed. Do not remove this without changing how the model loads.
 android {
     androidResources { noCompress += "onnx" }
 }

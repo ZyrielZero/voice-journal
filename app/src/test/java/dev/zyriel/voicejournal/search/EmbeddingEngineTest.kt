@@ -6,21 +6,25 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.channels.FileChannel
 
 /**
  * Runs against the real vocab and the real int8 ONNX model bundled in assets,
  * using ONNX Runtime's JVM artifact. This verifies tokenization, inference,
- * CLS pooling, and normalization off-device. On-device latency remains a
+ * mean pooling, and normalization off-device. On-device latency remains a
  * separate, hardware-only question.
  */
 class EmbeddingEngineTest {
 
     private fun asset(name: String) = TestPaths.mainAsset("models/$name")
 
-    private fun tokenizer() = WordPieceTokenizer(asset("bge_vocab.txt").inputStream())
+    private fun tokenizer() = WordPieceTokenizer(asset("bert_vocab.txt").inputStream())
 
+    /** Loads the model the way the app does: a read-only file mapping, not a heap array. */
     private fun engine() = OnnxEmbeddingEngine(
-        modelBytes = asset("bge_small_en_v15_q8.onnx").readBytes(),
+        model = FileChannel.open(asset("gte_base_q8.onnx").toPath()).use {
+            it.map(FileChannel.MapMode.READ_ONLY, 0, it.size())
+        },
         vocab = tokenizer(),
     )
 
@@ -52,7 +56,7 @@ class EmbeddingEngineTest {
     @Test
     fun unknownWordSplitsToSubwordsOrUnk() {
         val t = tokenizer()
-        val unk = asset("bge_vocab.txt").readLines().indexOf("[UNK]").toLong()
+        val unk = asset("bert_vocab.txt").readLines().indexOf("[UNK]").toLong()
         assertTrue("vocab has no [UNK]", unk >= 0)
 
         val pieces = t.encode("journaling", 16).toList().drop(1).dropLast(1)
@@ -167,8 +171,9 @@ class EmbeddingEngineTest {
         assertEquals(OnnxEmbeddingEngine.DIM, query.size)
         val whole = VectorSearch.bestCosine(query, stored)!!
         // What the old single-vector embedding saw: only the first window.
+        // gte similarities live in a band about 0.15 wide, so 0.05 is a large gap.
         val firstWindowOnly = VectorSearch.cosine(query, stored.copyOfRange(0, OnnxEmbeddingEngine.DIM))
-        assertTrue("end of entry must be searchable: best=$whole first=$firstWindowOnly", whole > firstWindowOnly + 0.1f)
+        assertTrue("end of entry must be searchable: best=$whole first=$firstWindowOnly", whole > firstWindowOnly + 0.05f)
         e.close()
     }
 

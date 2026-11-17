@@ -3,8 +3,10 @@ package dev.zyriel.voicejournal.ui
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,7 +68,16 @@ internal fun TransferDialogs(
     AlertDialog(
         onDismissRequest = { if (!status.inFlight) onDismiss() },
         title = { Text(stringResource(R.string.transfer_title)) },
-        text = { Text(status.message) },
+        text = {
+            Column {
+                Text(status.message)
+                // No count to show: the archive is streamed, so this only says it is alive.
+                if (status.inFlight) {
+                    Spacer(Modifier.height(16.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            }
+        },
         confirmButton = {
             if (!status.inFlight) TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
         },

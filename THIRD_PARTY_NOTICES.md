@@ -16,7 +16,7 @@ Voice Journal is GPLv3 (see `LICENSE`). It includes or downloads the components 
 
 - **Whisper base.en** (OpenAI) - MIT License. Weights converted to ggml and quantized to q5_1 by the whisper.cpp project (`ggerganov/whisper.cpp` on HuggingFace, MIT).
 - **Silero VAD v5.1.2** (snakers4/silero-vad, Silero Team) - MIT License. Converted to ggml by the whisper.cpp project (`ggml-org/whisper-vad` on HuggingFace).
-- **bge-small-en-v1.5** (BAAI) - MIT License. The vocabulary comes from `BAAI/bge-small-en-v1.5`; the int8 ONNX model is the conversion published by Xenova (`Xenova/bge-small-en-v1.5`, `onnx/model_quantized.onnx`), distributed under the same MIT license.
+- **gte-base** (Alibaba DAMO Academy, `thenlper/gte-base`) - MIT License. The vocabulary comes from `thenlper/gte-base`; the int8 ONNX model is the conversion published by Xenova (`Xenova/gte-base`, `onnx/model_quantized.onnx`), distributed under the same MIT license.
 
 ## Debug builds only
 

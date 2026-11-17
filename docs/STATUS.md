@@ -94,9 +94,21 @@ First device run, 2026-11-16, Pixel 11 Pro XL on Android 17 (API 37), debug buil
    manifest. Confirm on a device that embedding and search still work (they do on the
    JVM) and that logcat shows no crash or retry loop from the library at startup.
 10. **Search floor:** the similarity floor and margin (`HybridSearch.SEMANTIC_FLOOR`,
-   `SEMANTIC_MARGIN`) are calibrated on a twelve-entry fixture (`SearchCalibrationTest`),
-   which is a small sample. Try them on a real journal; if real queries come back empty
-   too often, lower the floor and re-run that test.
+   `SEMANTIC_MARGIN`, `SEMANTIC_STRONG`) are calibrated on two small fixtures
+   (`SearchCalibrationTest`, twelve entries; `ConceptSearchTest`, 36), which is a small
+   sample. Try them on a real journal; if real queries come back empty too often, lower
+   the floor and re-run those tests.
+11. **gte-base embedding model (replaces bge-small).** Run on the Pixel 11 Pro XL,
+   2026-11-17, debug build from an uncommitted tree: the 110 MB model loads through a
+   memory mapping of the APK asset (`ModelAssets.map`) in about 0.4 s with the Java heap
+   at 15 MB (305 MB total PSS, 153 MB of it native); the existing 54-entry journal was
+   re-embedded by the backfill in 2.2 s, about 40 ms an entry at an average of 560
+   characters, and every row's `embeddingModel` is now `gte-base-q8+chunk1`. That run
+   also found that the backfill had never worked on a device: its vector write bound a
+   FloatArray in a Room `@Query`, which Room expands into one placeholder per float, so
+   every write failed with a syntax error (fixed; see `JournalDao`). Still open: the
+   benchmark's embed and search rows in the README predate this model, and nobody has
+   yet typed real queries into the search box on a real journal (item 10).
 
 ## Closed incident: "Acc suite hangs on device"
 

@@ -52,6 +52,7 @@ class RecordingControllerTest {
     private class FakeCapture(private val samplesOnStop: Int = 1600) : RecordingController.Capture {
         override val state = MutableStateFlow<AudioRecorder.State>(AudioRecorder.State.Idle)
         override val elapsedMs = MutableStateFlow(0L)
+        override val level = MutableStateFlow(0f)
         var failStartWith: String? = null
         val starts = AtomicInteger()
         val stops = AtomicInteger()
@@ -89,7 +90,7 @@ class RecordingControllerTest {
         override fun observeAll(): Flow<List<JournalEntry>> = flowOf(rows.toList())
         override suspend fun allOnce(): List<JournalEntry> = rows.toList()
         override suspend fun needingEmbedding(model: String): List<JournalEntry> = emptyList()
-        override suspend fun setEmbeddingIfUnchanged(id: Long, transcript: String, embedding: FloatArray, model: String) = 0
+        override suspend fun setEmbeddingBlobIfUnchanged(id: Long, transcript: String, embedding: ByteArray, model: String) = 0
         override suspend fun setTranscript(id: Long, transcript: String) = 0
         override suspend fun countByAudioPath(path: String) = rows.count { it.audioPath == path }
     }
@@ -169,6 +170,35 @@ class RecordingControllerTest {
         assertTrue(File(row.audioPath).isFile)
         assertNotEquals(null, row.embedding)
         assertNotEquals(null, row.embeddingModel)
+    }
+
+    @Test
+    fun discardDeletesTheAudioAndSavesNothing() {
+        val transcribed = AtomicInteger()
+        val r = rig(transcribe = { transcribed.incrementAndGet(); "never" })
+        r.awaitLaunch()
+        r.controller.startRecording()
+
+        r.controller.discardRecording()
+        r.controller.stopAndTranscribe() // loses the race to the discard
+        r.awaitState { it is PipelineState.Idle }
+
+        assertTrue(r.dao.rows.isEmpty())
+        assertEquals(0, transcribed.get())
+        assertEquals(emptyList<String>(), dir.listFiles { f -> f.isFile }!!.map { it.name })
+
+        // The pipeline is usable again afterwards.
+        r.controller.startRecording()
+        assertEquals(PipelineState.Recording, r.controller.pipeline.value)
+    }
+
+    @Test
+    fun discardWhenNotRecordingIsIgnored() {
+        val r = rig()
+        r.awaitLaunch()
+        r.controller.discardRecording()
+        assertEquals(PipelineState.Idle, r.controller.pipeline.value)
+        assertEquals(0, r.capture.stops.get())
     }
 
     @Test

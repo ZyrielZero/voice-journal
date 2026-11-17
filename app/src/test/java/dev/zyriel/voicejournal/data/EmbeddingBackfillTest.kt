@@ -39,11 +39,11 @@ class EmbeddingBackfillTest {
             needingCalls++
             rows.values.filter { it.embedding == null || it.embeddingModel != model }
         }
-        override suspend fun setEmbeddingIfUnchanged(id: Long, transcript: String, embedding: FloatArray, model: String) =
+        override suspend fun setEmbeddingBlobIfUnchanged(id: Long, transcript: String, embedding: ByteArray, model: String) =
             lock.withLock {
                 val r = rows[id]
                 if (r == null || r.transcript != transcript) 0
-                else { rows[id] = r.copy(embedding = embedding, embeddingModel = model); 1 }
+                else { rows[id] = r.copy(embedding = Converters().toFloatArray(embedding), embeddingModel = model); 1 }
             }
         override suspend fun setTranscript(id: Long, transcript: String) = lock.withLock {
             val r = rows[id] ?: return@withLock 0

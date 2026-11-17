@@ -14,7 +14,7 @@ A journal is one of the most private things a person owns. This app has **no INT
 - Built APK: `aapt dump permissions <apk>` shows the same
 - Enforced, not just declared: a library's manifest can add permissions behind the app's back (ONNX Runtime's does, along with a telemetry initializer). Those entries are stripped in the manifest, the Gradle build fails if the merged manifest contains a network permission (`verifyNoNetwork` in [`app/build.gradle.kts`](app/build.gradle.kts)), and CI checks the built APK again
 
-Transcription runs locally through [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (base.en, q5_1). Semantic search runs locally through [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (int8 ONNX). Your recordings, transcripts, and embeddings live in app-private storage; the export/import feature copies a file to a location you pick, and only when you ask it to.
+Transcription runs locally through [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (base.en, q5_1). Semantic search runs locally through [gte-base](https://huggingface.co/thenlper/gte-base) (int8 ONNX). Your recordings, transcripts, and embeddings live in app-private storage; the export/import feature copies a file to a location you pick, and only when you ask it to.
 
 What protects the journal, precisely:
 
@@ -25,7 +25,7 @@ What protects the journal, precisely:
 
 The search box combines two signals ([`Search.kt`](app/src/main/java/dev/zyriel/voicejournal/search/Search.kt)):
 
-- **Meaning.** Each entry is embedded on-device; a query matches entries whose similarity clears a floor and sits close to the best match, both measured against the bundled model ([`SearchCalibrationTest`](app/src/test/java/dev/zyriel/voicejournal/search/SearchCalibrationTest.kt)). A query about something you never said usually returns nothing, instead of the twenty least-unrelated entries. This is a trim, not a guarantee: the model's similarity scores for related and unrelated text overlap, so a loosely related entry can still appear behind the real matches.
+- **Meaning.** Each entry is embedded on-device, and a query finds entries by what they are about even when they never say the word: "physics" brings back a ramble about clocks on fast ships, "math" a proof talked through out loud. [`ConceptSearchTest`](app/src/test/java/dev/zyriel/voicejournal/search/ConceptSearchTest.kt) is the bar: 36 entries, 35 such queries, and the model was chosen on it (mean average precision 0.89, against 0.74 for the bge-small model used before). The kind of a recording is harder than its subject: "poems" leads with recited poems but also returns a prayer and a hymn, and misses the least poem-like ones. A query matches entries whose similarity clears a floor and sits close to the best match, both measured against the bundled model ([`SearchCalibrationTest`](app/src/test/java/dev/zyriel/voicejournal/search/SearchCalibrationTest.kt)). A query about something you never said usually returns nothing, instead of the twenty least-unrelated entries. This is a trim, not a guarantee: the model's similarity scores for related and unrelated text overlap, so a loosely related entry can still appear behind the real matches.
 - **Words.** An entry that contains a query word is always a result and gets a ranking boost, which is what finds names and other exact terms the model has no feel for. It is also how an entry is found before its embedding exists (just imported, just edited).
 
 Entries longer than the model's 256-token window are embedded as overlapping windows, so the end of a ten-minute entry is as searchable as its first minute.
@@ -45,8 +45,8 @@ So a one-minute entry takes about 9 seconds to become searchable text with the d
 
 | Operation | Median of 5 | Notes |
 |---|---|---|
-| Embed a typical entry (163 chars) | 8 ms | |
-| Semantic search, 5,000 entries | 10 ms | brute-force cosine, top 20 |
+| Embed a typical entry (163 chars) | 8 ms | measured with the previous, smaller model (bge-small); gte-base is about 2.5x slower on a desktop CPU and has not been timed on a phone yet |
+| Semantic search, 5,000 entries | 10 ms | brute-force cosine, top 20, 384-dim vectors; vectors are now 768-dim |
 
 The benchmark file also has `whisper.clip10s/30s/60s` rows (1.51, 1.68 and 3.37 s). Those are a synthetic 220 Hz tone with VAD off, not speech; they are useful for comparing builds but understate real latency by about 1.7x to 1.8x, so they are not quoted as performance.
 

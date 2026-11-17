@@ -227,7 +227,7 @@ step0() {
     adb_sh pm grant "$PKG" android.permission.RECORD_AUDIO >/dev/null 2>&1
     [ "$API" -ge 33 ] && adb_sh pm grant "$PKG" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1
     note "The app lock prompts on every cold start, and recovery waits behind it:"
-    note "unlock each time. More > App lock turns it off for a quicker run."
+    note "unlock each time. Settings > App lock turns it off for a quicker run."
 }
 
 step1() {
@@ -384,7 +384,7 @@ step7() {
     say "7. Encrypted export and import"
     launch
     note "All by hand. Use a real provider: Files, then Drive."
-    confirm 7 "More > Export with a password writes a .vjbackup file"
+    confirm 7 "Settings > Export journal with a password writes a .vjbackup file"
     confirm 7 "Rotating the phone while the file picker is open still exports (or refuses cleanly)"
     confirm 7 "Import with the WRONG password is refused with a clear message and changes nothing"
     confirm 7 "Import with the right password restores entries and audio (delete one first, check it returns and plays)"
@@ -397,7 +397,7 @@ step8() {
     note "MemAvailable: ${avail} MB"
     [ "$avail" -lt 3000 ] && note "Below 3000 MB: close apps or reboot first, or a silent lmkd kill is likely."
     launch
-    pause "Tap Acc, keep the screen on and the app in front, wait for 'Saved', then Close"
+    pause "Open Settings, scroll to Debug, tap Acc, keep the screen on and the app in front, wait for 'Saved', then Close"
     pause "Tap Bench, wait for 'Saved', then Close"
     local f n=0
     for f in $(adb_sh "run-as $PKG ls files" | grep -E '^vj-(accuracy|benchmark)-.*\.json$'); do

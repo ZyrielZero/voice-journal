@@ -14,6 +14,7 @@ import dev.zyriel.voicejournal.data.JournalEntry
 import dev.zyriel.voicejournal.data.openOutputStreamTruncating
 import dev.zyriel.voicejournal.pipeline.RecordingController
 import dev.zyriel.voicejournal.search.HybridSearch
+import dev.zyriel.voicejournal.search.OnnxEmbeddingEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -83,7 +84,7 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
                     else -> {
                         // Null vector (engine unavailable) means keywords only.
                         val qVec = controller.engine?.embedQuery(q)
-                        HybridSearch.rank(q, qVec, all, k = 20).map { it.entry }
+                        HybridSearch.rank(q, qVec, all, k = 20, modelTag = OnnxEmbeddingEngine.MODEL_TAG).map { it.entry }
                     }
                 }
             }
@@ -104,6 +105,9 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
         player.stop()
         controller.toggleRecording()
     }
+
+    /** Stops the recording in progress and deletes its audio. */
+    fun discardRecording() = controller.discardRecording()
 
     fun play(entry: JournalEntry) {
         val f = File(entry.audioPath)

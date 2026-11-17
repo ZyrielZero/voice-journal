@@ -51,8 +51,8 @@ class WordPieceCjkTest {
     }
 
     @Test
-    fun realBgeVocabGivesPerCharacterIds() {
-        val f = File("src/main/assets/models/bge_vocab.txt")
+    fun realVocabGivesPerCharacterIds() {
+        val f = File("src/main/assets/models/bert_vocab.txt")
         if (!f.isFile) return // models are fetched at build time; skip when absent
         val t = WordPieceTokenizer(f.inputStream())
         // Ids checked against the vocab's own line numbers (0-based).
